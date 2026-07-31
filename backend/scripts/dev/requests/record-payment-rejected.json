@@ -1,0 +1,8 @@
+{
+  "paidById": 6,
+  "version": 2,
+  "paidAt": "2026-07-31T13:00:00+08:00",
+  "paymentMethod": "BANK_TRANSFER",
+  "paymentReference": "REJECTED-REQUEST",
+  "paymentNote": "拒絕案件不可付款"
+}

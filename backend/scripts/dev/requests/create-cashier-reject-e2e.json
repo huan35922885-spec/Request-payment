@@ -1,0 +1,34 @@
+{
+  "applicantId": 1,
+  "companyId": 1,
+  "customerId": 1,
+  "requestCategory": "EXPENSE",
+  "reason": "Cashier reject E2E",
+  "items": [
+    {
+      "expenseTypeId": 1,
+      "description": "E2E manual",
+      "manualAmount": 100.50,
+      "multiplier": 1.00,
+      "sortOrder": 1
+    },
+    {
+      "expenseTypeId": 2,
+      "priceCode": "DEFAULT",
+      "description": "E2E meal",
+      "peopleCount": 2,
+      "days": 3,
+      "quantity": 2.00,
+      "multiplier": 1.00,
+      "sortOrder": 2
+    },
+    {
+      "expenseTypeId": 3,
+      "priceCode": "REGISTERED_MAIL",
+      "description": "E2E confirmation",
+      "quantity": 10.00,
+      "multiplier": 2.00,
+      "sortOrder": 3
+    }
+  ]
+}

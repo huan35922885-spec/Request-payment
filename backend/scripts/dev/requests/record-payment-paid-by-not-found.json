@@ -1,0 +1,8 @@
+{
+  "paidById": 999999999,
+  "version": 3,
+  "paidAt": "2026-07-30T15:00:00+08:00",
+  "paymentMethod": "BANK_TRANSFER",
+  "paymentReference": "NOT-FOUND",
+  "paymentNote": "付款人不存在測試"
+}

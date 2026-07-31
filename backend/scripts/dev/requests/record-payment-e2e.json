@@ -1,0 +1,8 @@
+{
+  "paidById": 6,
+  "version": 3,
+  "paidAt": "2026-07-30T15:00:00+08:00",
+  "paymentMethod": "BANK_TRANSFER",
+  "paymentReference": "E2E-TRANSFER-001",
+  "paymentNote": "E2E 已完成銀行轉帳"
+}

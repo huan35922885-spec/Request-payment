@@ -1,0 +1,191 @@
+package tw.com.jsgcpa.paymentapproval.common.exception;
+
+import jakarta.servlet.http.HttpServletRequest;
+import java.time.OffsetDateTime;
+import java.time.ZoneId;
+import java.util.Comparator;
+import java.util.List;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.MethodArgumentNotValidException;
+import org.springframework.web.bind.annotation.ExceptionHandler;
+import org.springframework.web.bind.annotation.RestControllerAdvice;
+import org.springframework.http.converter.HttpMessageNotReadableException;
+import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
+import tw.com.jsgcpa.paymentapproval.common.api.ApiErrorResponse;
+import tw.com.jsgcpa.paymentapproval.common.api.FieldValidationError;
+import tw.com.jsgcpa.paymentapproval.payment.exception.PaymentDraftBusinessException;
+
+@RestControllerAdvice
+public class GlobalExceptionHandler {
+
+    private static final Logger log =
+            LoggerFactory.getLogger(GlobalExceptionHandler.class);
+    private static final ZoneId BUSINESS_ZONE = ZoneId.of("Asia/Taipei");
+
+    @ExceptionHandler(MethodArgumentNotValidException.class)
+    public ResponseEntity<ApiErrorResponse> handleValidationException(
+            MethodArgumentNotValidException exception,
+            HttpServletRequest request
+    ) {
+        List<FieldValidationError> fieldErrors = exception.getBindingResult()
+                .getFieldErrors()
+                .stream()
+                .map(fieldError -> new FieldValidationError(
+                        fieldError.getField(),
+                        fieldError.getDefaultMessage()
+                ))
+                .sorted(Comparator.comparing(FieldValidationError::field))
+                .toList();
+
+        return errorResponse(
+                HttpStatus.BAD_REQUEST,
+                "VALIDATION_FAILED",
+                "Request validation failed",
+                request,
+                fieldErrors
+        );
+    }
+
+    @ExceptionHandler(HttpMessageNotReadableException.class)
+    public ResponseEntity<ApiErrorResponse> handleMessageNotReadableException(
+            HttpMessageNotReadableException exception,
+            HttpServletRequest request
+    ) {
+        return errorResponse(
+                HttpStatus.BAD_REQUEST,
+                "INVALID_REQUEST_BODY",
+                "Request body is missing or invalid",
+                request,
+                List.of()
+        );
+    }
+
+    @ExceptionHandler(MethodArgumentTypeMismatchException.class)
+    public ResponseEntity<ApiErrorResponse> handleQueryParameterTypeMismatch(
+            MethodArgumentTypeMismatchException exception,
+            HttpServletRequest request
+    ) {
+        return errorResponse(
+                HttpStatus.BAD_REQUEST,
+                "INVALID_QUERY_PARAMETER",
+                "Query parameter is invalid",
+                request,
+                List.of()
+        );
+    }
+
+    @ExceptionHandler(PaymentDraftBusinessException.class)
+    public ResponseEntity<ApiErrorResponse> handleBusinessException(
+            PaymentDraftBusinessException exception,
+            HttpServletRequest request
+    ) {
+        HttpStatus status = resolveBusinessStatus(exception.getCode());
+        return errorResponse(
+                status,
+                exception.getCode(),
+                exception.getMessage(),
+                request,
+                List.of()
+        );
+    }
+
+    @ExceptionHandler(Exception.class)
+    public ResponseEntity<ApiErrorResponse> handleUnexpectedException(
+            Exception exception,
+            HttpServletRequest request
+    ) {
+        log.error(
+                "Unhandled exception for request path {}",
+                request.getRequestURI(),
+                exception
+        );
+        return errorResponse(
+                HttpStatus.INTERNAL_SERVER_ERROR,
+                "INTERNAL_SERVER_ERROR",
+                "An unexpected error occurred",
+                request,
+                List.of()
+        );
+    }
+
+    private HttpStatus resolveBusinessStatus(String code) {
+        if ("MANAGER_NOT_AUTHORIZED".equals(code)) {
+            return HttpStatus.FORBIDDEN;
+        }
+        if ("INVALID_CASHIER_ID".equals(code)
+                || "INVALID_PAID_BY_ID".equals(code)
+                || "INVALID_PAYMENT_DATE".equals(code)) {
+            return HttpStatus.BAD_REQUEST;
+        }
+        if (isNotFoundCode(code)) {
+            return HttpStatus.NOT_FOUND;
+        }
+        if (isConflictCode(code)) {
+            return HttpStatus.CONFLICT;
+        }
+        return HttpStatus.BAD_REQUEST;
+    }
+
+    private boolean isNotFoundCode(String code) {
+        return switch (code) {
+            case "APPLICANT_NOT_FOUND",
+                    "COMPANY_NOT_FOUND",
+                    "CUSTOMER_NOT_FOUND",
+                    "EXPENSE_TYPE_NOT_FOUND",
+                    "PRICE_SETTING_NOT_FOUND",
+                    "CASHIER_NOT_FOUND",
+                    "PAID_BY_NOT_FOUND",
+                    "PAYMENT_REQUEST_NOT_FOUND" -> true;
+            default -> false;
+        };
+    }
+
+    private boolean isConflictCode(String code) {
+        return switch (code) {
+            case "APPLICANT_INACTIVE",
+                    "APPLICANT_DEPARTMENT_MISSING",
+                    "DEPARTMENT_INACTIVE",
+                    "COMPANY_INACTIVE",
+                    "CUSTOMER_INACTIVE",
+                    "EXPENSE_TYPE_INACTIVE",
+                    "CUSTOMER_CATEGORY_MISMATCH",
+                    "PRICE_SETTING_CONFLICT",
+                    "PAYMENT_REQUEST_VERSION_CONFLICT",
+                    "PAYMENT_REQUEST_NOT_DRAFT",
+                    "PAYMENT_REQUEST_DEPARTMENT_MISSING",
+                    "PAYMENT_REQUEST_NOT_PENDING_MANAGER",
+                    "PAYMENT_REQUEST_NOT_PENDING_CASHIER",
+                    "PAYMENT_REQUEST_NOT_APPROVED",
+                    "PAYMENT_REQUEST_ALREADY_PAID",
+                    "CASHIER_INACTIVE",
+                    "PAID_BY_INACTIVE",
+                    "SUPERVISOR_SNAPSHOT_MISSING",
+                    "SUPERVISOR_NOT_FOUND",
+                    "SUPERVISOR_CONFLICT",
+                    "SUPERVISOR_INACTIVE" -> true;
+            default -> false;
+        };
+    }
+
+    private ResponseEntity<ApiErrorResponse> errorResponse(
+            HttpStatus status,
+            String code,
+            String message,
+            HttpServletRequest request,
+            List<FieldValidationError> fieldErrors
+    ) {
+        ApiErrorResponse response = new ApiErrorResponse(
+                OffsetDateTime.now(BUSINESS_ZONE),
+                status.value(),
+                status.getReasonPhrase(),
+                code,
+                message,
+                request.getRequestURI(),
+                fieldErrors
+        );
+        return ResponseEntity.status(status).body(response);
+    }
+}

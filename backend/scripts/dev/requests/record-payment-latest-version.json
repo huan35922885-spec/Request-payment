@@ -1,0 +1,8 @@
+{
+  "paidById": 6,
+  "version": 4,
+  "paidAt": "2026-07-30T15:00:00+08:00",
+  "paymentMethod": "BANK_TRANSFER",
+  "paymentReference": "LATEST-RETRY",
+  "paymentNote": "最新版本重試"
+}

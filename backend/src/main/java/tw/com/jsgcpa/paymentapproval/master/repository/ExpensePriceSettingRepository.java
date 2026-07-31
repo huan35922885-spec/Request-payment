@@ -28,4 +28,21 @@ public interface ExpensePriceSettingRepository extends JpaRepository<ExpensePric
             @Param("priceCode") String priceCode,
             @Param("effectiveDate") LocalDate effectiveDate
     );
+
+    @Query("""
+            select priceSetting
+            from ExpensePriceSetting priceSetting
+            where priceSetting.expenseType.id = :expenseTypeId
+              and priceSetting.active = true
+              and priceSetting.effectiveFrom <= :today
+              and (
+                    priceSetting.effectiveTo is null
+                    or priceSetting.effectiveTo >= :today
+              )
+            order by priceSetting.priceCode asc, priceSetting.id asc
+            """)
+    List<ExpensePriceSetting> findEffectivePrices(
+            @Param("expenseTypeId") Long expenseTypeId,
+            @Param("today") LocalDate today
+    );
 }
