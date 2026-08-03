@@ -17,6 +17,7 @@ import org.springframework.web.method.annotation.MethodArgumentTypeMismatchExcep
 import tw.com.jsgcpa.paymentapproval.common.api.ApiErrorResponse;
 import tw.com.jsgcpa.paymentapproval.common.api.FieldValidationError;
 import tw.com.jsgcpa.paymentapproval.payment.exception.PaymentDraftBusinessException;
+import tw.com.jsgcpa.paymentapproval.security.exception.AuthenticationBusinessException;
 
 @RestControllerAdvice
 public class GlobalExceptionHandler {
@@ -92,6 +93,23 @@ public class GlobalExceptionHandler {
         );
     }
 
+    @ExceptionHandler(AuthenticationBusinessException.class)
+    public ResponseEntity<ApiErrorResponse> handleAuthenticationBusinessException(
+            AuthenticationBusinessException exception,
+            HttpServletRequest request
+    ) {
+        HttpStatus status = "INVALID_CREDENTIALS".equals(exception.getCode())
+                ? HttpStatus.UNAUTHORIZED
+                : HttpStatus.INTERNAL_SERVER_ERROR;
+        return errorResponse(
+                status,
+                exception.getCode(),
+                exception.getMessage(),
+                request,
+                List.of()
+        );
+    }
+
     @ExceptionHandler(Exception.class)
     public ResponseEntity<ApiErrorResponse> handleUnexpectedException(
             Exception exception,
@@ -112,8 +130,14 @@ public class GlobalExceptionHandler {
     }
 
     private HttpStatus resolveBusinessStatus(String code) {
-        if ("MANAGER_NOT_AUTHORIZED".equals(code)) {
+        if ("MANAGER_NOT_AUTHORIZED".equals(code)
+                || "PAYMENT_REQUEST_MANAGER_FORBIDDEN".equals(code)
+                || "PAYMENT_REQUEST_SUBMIT_FORBIDDEN".equals(code)
+                || "PAYMENT_REQUEST_LIST_SCOPE_FORBIDDEN".equals(code)) {
             return HttpStatus.FORBIDDEN;
+        }
+        if ("PAYMENT_REQUEST_LIST_SCOPE_REQUIRED".equals(code)) {
+            return HttpStatus.BAD_REQUEST;
         }
         if ("INVALID_CASHIER_ID".equals(code)
                 || "INVALID_PAID_BY_ID".equals(code)

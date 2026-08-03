@@ -5,6 +5,7 @@ import java.time.LocalDate;
 import java.time.OffsetDateTime;
 import java.time.ZoneId;
 import java.util.List;
+import java.util.Objects;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.dao.OptimisticLockingFailureException;
 import org.springframework.stereotype.Service;
@@ -62,10 +63,11 @@ public class SubmitPaymentDraftService {
     @Transactional
     public SubmitPaymentDraftResponse submit(
             Long paymentRequestId,
+            Long authenticatedUserId,
             Long expectedVersion
     ) {
         validatePaymentRequestId(paymentRequestId);
-        validateExpectedVersion(expectedVersion);
+        validateAuthenticatedUserId(authenticatedUserId);
 
         PaymentRequest paymentRequest = paymentRequestRepository.findById(paymentRequestId)
                 .orElseThrow(() -> businessError(
@@ -73,6 +75,8 @@ public class SubmitPaymentDraftService {
                         "Payment request not found: " + paymentRequestId
                 ));
 
+        validateOwnership(paymentRequest, authenticatedUserId);
+        validateExpectedVersion(expectedVersion);
         validateVersion(paymentRequestId, expectedVersion, paymentRequest.getVersion());
         validateDraftStatus(paymentRequest.getApprovalStatus());
 
@@ -156,6 +160,29 @@ public class SubmitPaymentDraftService {
             throw businessError(
                     "INVALID_PAYMENT_REQUEST_VERSION",
                     "Payment request version must be zero or greater"
+            );
+        }
+    }
+
+    private void validateAuthenticatedUserId(Long authenticatedUserId) {
+        if (authenticatedUserId == null || authenticatedUserId <= 0) {
+            throw businessError(
+                    "INVALID_AUTHENTICATED_USER_ID",
+                    "Authenticated user id must be greater than zero"
+            );
+        }
+    }
+
+    private void validateOwnership(
+            PaymentRequest paymentRequest,
+            Long authenticatedUserId
+    ) {
+        AppUser applicant = paymentRequest.getApplicant();
+        if (applicant == null
+                || !Objects.equals(applicant.getId(), authenticatedUserId)) {
+            throw businessError(
+                    "PAYMENT_REQUEST_SUBMIT_FORBIDDEN",
+                    "只有原申請人可以送出此請款草稿"
             );
         }
     }

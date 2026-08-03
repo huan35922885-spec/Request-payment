@@ -35,28 +35,48 @@ public class GetPaymentRequestDetailService {
     private final PaymentRequestItemRepository paymentRequestItemRepository;
     private final ApprovalHistoryRepository approvalHistoryRepository;
     private final PaymentRequestAttachmentRepository paymentRequestAttachmentRepository;
+    private final PaymentRequestReadAuthorizationService readAuthorizationService;
 
     public GetPaymentRequestDetailService(
             PaymentRequestRepository paymentRequestRepository,
             PaymentRequestItemRepository paymentRequestItemRepository,
             ApprovalHistoryRepository approvalHistoryRepository,
-            PaymentRequestAttachmentRepository paymentRequestAttachmentRepository
+            PaymentRequestAttachmentRepository paymentRequestAttachmentRepository,
+            PaymentRequestReadAuthorizationService readAuthorizationService
     ) {
         this.paymentRequestRepository = paymentRequestRepository;
         this.paymentRequestItemRepository = paymentRequestItemRepository;
         this.approvalHistoryRepository = approvalHistoryRepository;
         this.paymentRequestAttachmentRepository = paymentRequestAttachmentRepository;
+        this.readAuthorizationService = readAuthorizationService;
     }
 
-    public PaymentRequestDetailResponse getDetail(Long paymentRequestId) {
+    public PaymentRequestDetailResponse getDetail(
+            Long paymentRequestId,
+            Long authenticatedUserId,
+            boolean hasCashierAuthority,
+            boolean hasPaymentOperatorAuthority
+    ) {
         validatePaymentRequestId(paymentRequestId);
 
         PaymentRequest paymentRequest = paymentRequestRepository
                 .findById(paymentRequestId)
                 .orElseThrow(() -> businessError(
                         "PAYMENT_REQUEST_NOT_FOUND",
-                        "Payment request not found: " + paymentRequestId
+                        "找不到請款單"
                 ));
+
+        if (!readAuthorizationService.canReadDetail(
+                paymentRequest,
+                authenticatedUserId,
+                hasCashierAuthority,
+                hasPaymentOperatorAuthority
+        )) {
+            throw businessError(
+                    "PAYMENT_REQUEST_NOT_FOUND",
+                    "找不到請款單"
+            );
+        }
 
         List<PaymentRequestItem> items = paymentRequestItemRepository
                 .findByPaymentRequest_IdOrderBySortOrderAscIdAsc(paymentRequestId);

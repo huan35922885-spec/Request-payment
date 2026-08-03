@@ -34,6 +34,7 @@ import tw.com.jsgcpa.paymentapproval.approval.enums.ApprovalStatus;
 import tw.com.jsgcpa.paymentapproval.approval.repository.ApprovalHistoryRepository;
 import tw.com.jsgcpa.paymentapproval.organization.entity.AppUser;
 import tw.com.jsgcpa.paymentapproval.organization.repository.AppUserRepository;
+import tw.com.jsgcpa.paymentapproval.payment.dto.request.CashierReviewPaymentRequest;
 import tw.com.jsgcpa.paymentapproval.payment.dto.response.CashierReviewPaymentResponse;
 import tw.com.jsgcpa.paymentapproval.payment.entity.PaymentRequest;
 import tw.com.jsgcpa.paymentapproval.payment.enums.PaymentStatus;
@@ -92,8 +93,7 @@ class CashierReviewPaymentServiceTest {
         CashierReviewPaymentResponse response = service.approve(
                 1L,
                 9L,
-                2L,
-                "出納確認"
+                reviewRequest(2L, "出納確認")
         );
 
         assertEquals(ApprovalStatus.APPROVED,
@@ -126,7 +126,7 @@ class CashierReviewPaymentServiceTest {
         stubValidReview(paymentRequest, cashier);
         stubSaveAndFlushVersion(3L);
 
-        service.approve(1L, 9L, 2L, "核准付款申請");
+        service.approve(1L, 9L, reviewRequest(2L, "核准付款申請"));
 
         ApprovalHistory history = capturedHistory();
         assertSame(paymentRequest, history.getPaymentRequest());
@@ -155,8 +155,7 @@ class CashierReviewPaymentServiceTest {
         CashierReviewPaymentResponse response = service.reject(
                 1L,
                 9L,
-                2L,
-                "資料不完整"
+                reviewRequest(2L, "資料不完整")
         );
 
         assertEquals(ApprovalStatus.REJECTED_CLOSED,
@@ -186,7 +185,7 @@ class CashierReviewPaymentServiceTest {
         stubValidReview(paymentRequest, cashier);
         stubSaveAndFlushVersion(3L);
 
-        service.reject(1L, 9L, 2L, "退回補件");
+        service.reject(1L, 9L, reviewRequest(2L, "退回補件"));
 
         ApprovalHistory history = capturedHistory();
         assertSame(paymentRequest, history.getPaymentRequest());
@@ -213,7 +212,7 @@ class CashierReviewPaymentServiceTest {
         stubValidReview(approveRequest, cashier);
         stubSaveAndFlushVersion(3L);
 
-        service.approve(1L, 9L, 2L, null);
+        service.approve(1L, 9L, reviewRequest(2L, null));
 
         assertEquals(PaymentStatus.PAID, approveRequest.getPaymentStatus());
 
@@ -223,7 +222,7 @@ class CashierReviewPaymentServiceTest {
         stubValidReview(rejectRequest, cashier);
         stubSaveAndFlushVersion(3L);
 
-        service.reject(1L, 9L, 2L, null);
+        service.reject(1L, 9L, reviewRequest(2L, null));
 
         assertEquals(PaymentStatus.PAID, rejectRequest.getPaymentStatus());
     }
@@ -236,7 +235,7 @@ class CashierReviewPaymentServiceTest {
         stubValidReview(paymentRequest, cashier());
         stubSaveAndFlushVersion(3L);
 
-        service.approve(1L, 9L, 2L, null);
+        service.approve(1L, 9L, reviewRequest(2L, null));
 
         InOrder order = inOrder(
                 paymentRequestRepository,
@@ -254,7 +253,7 @@ class CashierReviewPaymentServiceTest {
         stubValidReview(paymentRequest, cashier());
         stubSaveAndFlushVersion(3L);
 
-        service.reject(1L, 9L, 2L, null);
+        service.reject(1L, 9L, reviewRequest(2L, null));
 
         InOrder order = inOrder(
                 paymentRequestRepository,
@@ -265,34 +264,38 @@ class CashierReviewPaymentServiceTest {
     }
 
     @Test
-    void rejectsMissingPaymentRequestBeforeLookingUpCashier() {
+    void rejectsMissingPaymentRequestAfterValidatingCashier() {
         when(paymentRequestRepository.findById(1L)).thenReturn(Optional.empty());
+        when(appUserRepository.findById(9L))
+                .thenReturn(Optional.of(cashier()));
 
         assertCode(
                 "PAYMENT_REQUEST_NOT_FOUND",
-                () -> service.approve(1L, 9L, 2L, null)
+                () -> service.approve(1L, 9L, reviewRequest(2L, null))
         );
 
-        verify(appUserRepository, never()).findById(any());
+        verify(appUserRepository, times(1)).findById(9L);
         verify(paymentRequestRepository, never()).saveAndFlush(any());
         verify(approvalHistoryRepository, never()).save(any());
     }
 
     @Test
-    void rejectsVersionConflictBeforeLookingUpCashier() {
+    void rejectsVersionConflictAfterValidatingCashier() {
         PaymentRequest paymentRequest = pendingCashierPaymentRequest(
                 PaymentStatus.UNPAID
         );
         setField(paymentRequest, "version", 3L);
         when(paymentRequestRepository.findById(1L))
                 .thenReturn(Optional.of(paymentRequest));
+        when(appUserRepository.findById(9L))
+                .thenReturn(Optional.of(cashier()));
 
         assertCode(
                 "PAYMENT_REQUEST_VERSION_CONFLICT",
-                () -> service.approve(1L, 9L, 2L, null)
+                () -> service.approve(1L, 9L, reviewRequest(2L, null))
         );
 
-        verify(appUserRepository, never()).findById(any());
+        verify(appUserRepository, times(1)).findById(9L);
         verify(paymentRequestRepository, never()).saveAndFlush(any());
     }
 
@@ -313,13 +316,15 @@ class CashierReviewPaymentServiceTest {
         paymentRequest.setApprovalStatus(status);
         when(paymentRequestRepository.findById(1L))
                 .thenReturn(Optional.of(paymentRequest));
+        when(appUserRepository.findById(9L))
+                .thenReturn(Optional.of(cashier()));
 
         assertCode(
                 "PAYMENT_REQUEST_NOT_PENDING_CASHIER",
-                () -> service.reject(1L, 9L, 2L, null)
+                () -> service.reject(1L, 9L, reviewRequest(2L, null))
         );
 
-        verify(appUserRepository, never()).findById(any());
+        verify(appUserRepository, times(1)).findById(9L);
         verify(paymentRequestRepository, never()).saveAndFlush(any());
         verify(approvalHistoryRepository, never()).save(any());
     }
@@ -332,17 +337,19 @@ class CashierReviewPaymentServiceTest {
         paymentRequest.setApprovalStatus(ApprovalStatus.REJECTED_CLOSED);
         when(paymentRequestRepository.findById(1L))
                 .thenReturn(Optional.of(paymentRequest));
+        when(appUserRepository.findById(9L))
+                .thenReturn(Optional.of(cashier()));
 
         assertCode(
                 "PAYMENT_REQUEST_NOT_PENDING_CASHIER",
-                () -> service.approve(1L, 9L, 2L, null)
+                () -> service.approve(1L, 9L, reviewRequest(2L, null))
         );
         assertCode(
                 "PAYMENT_REQUEST_NOT_PENDING_CASHIER",
-                () -> service.reject(1L, 9L, 2L, null)
+                () -> service.reject(1L, 9L, reviewRequest(2L, null))
         );
 
-        verify(appUserRepository, never()).findById(any());
+        verify(appUserRepository, times(2)).findById(9L);
         verify(paymentRequestRepository, never()).saveAndFlush(any());
         verify(approvalHistoryRepository, never()).save(any());
     }
@@ -352,13 +359,11 @@ class CashierReviewPaymentServiceTest {
         PaymentRequest paymentRequest = pendingCashierPaymentRequest(
                 PaymentStatus.UNPAID
         );
-        when(paymentRequestRepository.findById(1L))
-                .thenReturn(Optional.of(paymentRequest));
         when(appUserRepository.findById(9L)).thenReturn(Optional.empty());
 
         assertCode(
                 "CASHIER_NOT_FOUND",
-                () -> service.approve(1L, 9L, 2L, null)
+                () -> service.approve(1L, 9L, reviewRequest(2L, null))
         );
 
         verify(paymentRequestRepository, never()).saveAndFlush(any());
@@ -367,19 +372,14 @@ class CashierReviewPaymentServiceTest {
 
     @Test
     void rejectsInactiveCashier() {
-        PaymentRequest paymentRequest = pendingCashierPaymentRequest(
-                PaymentStatus.UNPAID
-        );
         AppUser cashier = cashier();
         cashier.setActive(false);
-        when(paymentRequestRepository.findById(1L))
-                .thenReturn(Optional.of(paymentRequest));
         when(appUserRepository.findById(9L))
                 .thenReturn(Optional.of(cashier));
 
         assertCode(
                 "CASHIER_INACTIVE",
-                () -> service.reject(1L, 9L, 2L, null)
+                () -> service.reject(1L, 9L, reviewRequest(2L, null))
         );
 
         verify(paymentRequestRepository, never()).saveAndFlush(any());
@@ -400,7 +400,7 @@ class CashierReviewPaymentServiceTest {
 
         assertCode(
                 "PAYMENT_REQUEST_VERSION_CONFLICT",
-                () -> service.approve(1L, 9L, 2L, null)
+                () -> service.approve(1L, 9L, reviewRequest(2L, null))
         );
 
         verify(approvalHistoryRepository, never()).save(any());
@@ -417,7 +417,7 @@ class CashierReviewPaymentServiceTest {
 
         assertCode(
                 "PAYMENT_REQUEST_VERSION_CONFLICT",
-                () -> service.reject(1L, 9L, 2L, null)
+                () -> service.reject(1L, 9L, reviewRequest(2L, null))
         );
 
         verify(approvalHistoryRepository, never()).save(any());
@@ -435,7 +435,7 @@ class CashierReviewPaymentServiceTest {
 
         RuntimeException exception = assertThrows(
                 RuntimeException.class,
-                () -> service.approve(1L, 9L, 2L, "核准")
+                () -> service.approve(1L, 9L, reviewRequest(2L, "核准"))
         );
 
         assertEquals("history save failed", exception.getMessage());
@@ -455,7 +455,7 @@ class CashierReviewPaymentServiceTest {
 
         RuntimeException exception = assertThrows(
                 RuntimeException.class,
-                () -> service.reject(1L, 9L, 2L, "退回")
+                () -> service.reject(1L, 9L, reviewRequest(2L, "退回"))
         );
 
         assertEquals("history save failed", exception.getMessage());
@@ -466,23 +466,23 @@ class CashierReviewPaymentServiceTest {
     @Test
     void rejectsInvalidPaymentRequestIds() {
         assertCode("INVALID_PAYMENT_REQUEST_ID",
-                () -> service.approve(null, 9L, 2L, null));
+                () -> service.approve(null, 9L, reviewRequest(2L, null)));
         assertCode("INVALID_PAYMENT_REQUEST_ID",
-                () -> service.approve(0L, 9L, 2L, null));
+                () -> service.approve(0L, 9L, reviewRequest(2L, null)));
         assertCode("INVALID_PAYMENT_REQUEST_ID",
-                () -> service.approve(-1L, 9L, 2L, null));
+                () -> service.approve(-1L, 9L, reviewRequest(2L, null)));
 
         verify(paymentRequestRepository, never()).findById(any());
     }
 
     @Test
     void rejectsInvalidCashierIds() {
-        assertCode("INVALID_CASHIER_ID",
-                () -> service.approve(1L, null, 2L, null));
-        assertCode("INVALID_CASHIER_ID",
-                () -> service.approve(1L, 0L, 2L, null));
-        assertCode("INVALID_CASHIER_ID",
-                () -> service.approve(1L, -1L, 2L, null));
+        assertCode("INVALID_AUTHENTICATED_USER_ID",
+                () -> service.approve(1L, null, reviewRequest(2L, null)));
+        assertCode("INVALID_AUTHENTICATED_USER_ID",
+                () -> service.approve(1L, 0L, reviewRequest(2L, null)));
+        assertCode("INVALID_AUTHENTICATED_USER_ID",
+                () -> service.approve(1L, -1L, reviewRequest(2L, null)));
 
         verify(paymentRequestRepository, never()).findById(any());
     }
@@ -490,9 +490,9 @@ class CashierReviewPaymentServiceTest {
     @Test
     void rejectsInvalidExpectedVersions() {
         assertCode("INVALID_PAYMENT_REQUEST_VERSION",
-                () -> service.approve(1L, 9L, null, null));
+                () -> service.approve(1L, 9L, reviewRequest(null, null)));
         assertCode("INVALID_PAYMENT_REQUEST_VERSION",
-                () -> service.approve(1L, 9L, -1L, null));
+                () -> service.approve(1L, 9L, reviewRequest(-1L, null)));
 
         verify(paymentRequestRepository, never()).findById(any());
     }
@@ -536,6 +536,13 @@ class CashierReviewPaymentServiceTest {
                     setField(paymentRequest, "version", version);
                     return paymentRequest;
                 });
+    }
+
+    private CashierReviewPaymentRequest reviewRequest(
+            Long version,
+            String comment
+    ) {
+        return new CashierReviewPaymentRequest(version, comment);
     }
 
     private ApprovalHistory capturedHistory() {

@@ -13,6 +13,7 @@ import tw.com.jsgcpa.paymentapproval.approval.enums.ApprovalStatus;
 import tw.com.jsgcpa.paymentapproval.approval.repository.ApprovalHistoryRepository;
 import tw.com.jsgcpa.paymentapproval.organization.entity.AppUser;
 import tw.com.jsgcpa.paymentapproval.organization.repository.AppUserRepository;
+import tw.com.jsgcpa.paymentapproval.payment.dto.request.CashierReviewPaymentRequest;
 import tw.com.jsgcpa.paymentapproval.payment.dto.response.CashierReviewPaymentResponse;
 import tw.com.jsgcpa.paymentapproval.payment.entity.PaymentRequest;
 import tw.com.jsgcpa.paymentapproval.payment.enums.PaymentStatus;
@@ -58,14 +59,13 @@ public class CashierReviewPaymentService {
 
     public CashierReviewPaymentResponse approve(
             Long paymentRequestId,
-            Long cashierId,
-            Long expectedVersion,
-            String comment
+            Long authenticatedUserId,
+            CashierReviewPaymentRequest request
     ) {
         ReviewContext context = validateReviewRequest(
                 paymentRequestId,
-                cashierId,
-                expectedVersion
+                authenticatedUserId,
+                request
         );
         PaymentRequest paymentRequest = context.paymentRequest();
         AppUser cashier = context.cashier();
@@ -89,7 +89,7 @@ public class CashierReviewPaymentService {
         approvalHistory.setToApprovalStatus(ApprovalStatus.APPROVED);
         approvalHistory.setFromPaymentStatus(paymentStatus);
         approvalHistory.setToPaymentStatus(paymentStatus);
-        approvalHistory.setComment(comment);
+        approvalHistory.setComment(request.comment());
         approvalHistory.setActedAt(actedAt);
         approvalHistoryRepository.save(approvalHistory);
 
@@ -97,21 +97,20 @@ public class CashierReviewPaymentService {
                 savedPaymentRequest,
                 cashier,
                 ApprovalAction.CASHIER_APPROVE,
-                comment,
+                request.comment(),
                 actedAt
         );
     }
 
     public CashierReviewPaymentResponse reject(
             Long paymentRequestId,
-            Long cashierId,
-            Long expectedVersion,
-            String comment
+            Long authenticatedUserId,
+            CashierReviewPaymentRequest request
     ) {
         ReviewContext context = validateReviewRequest(
                 paymentRequestId,
-                cashierId,
-                expectedVersion
+                authenticatedUserId,
+                request
         );
         PaymentRequest paymentRequest = context.paymentRequest();
         AppUser cashier = context.cashier();
@@ -137,7 +136,7 @@ public class CashierReviewPaymentService {
         approvalHistory.setToApprovalStatus(ApprovalStatus.REJECTED_CLOSED);
         approvalHistory.setFromPaymentStatus(paymentStatus);
         approvalHistory.setToPaymentStatus(paymentStatus);
-        approvalHistory.setComment(comment);
+        approvalHistory.setComment(request.comment());
         approvalHistory.setActedAt(actedAt);
         approvalHistoryRepository.save(approvalHistory);
 
@@ -145,19 +144,33 @@ public class CashierReviewPaymentService {
                 savedPaymentRequest,
                 cashier,
                 ApprovalAction.CASHIER_REJECT,
-                comment,
+                request.comment(),
                 actedAt
         );
     }
 
     private ReviewContext validateReviewRequest(
             Long paymentRequestId,
-            Long cashierId,
-            Long expectedVersion
+            Long authenticatedUserId,
+            CashierReviewPaymentRequest request
     ) {
         validatePaymentRequestId(paymentRequestId);
-        validateCashierId(cashierId);
+        validateAuthenticatedUserId(authenticatedUserId);
+        Long expectedVersion = request == null ? null : request.version();
         validateExpectedVersion(expectedVersion);
+
+        AppUser cashier = appUserRepository.findById(authenticatedUserId)
+                .orElseThrow(() -> businessError(
+                        "CASHIER_NOT_FOUND",
+                        "Cashier not found: " + authenticatedUserId
+                ));
+
+        if (!Boolean.TRUE.equals(cashier.getActive())) {
+            throw businessError(
+                    "CASHIER_INACTIVE",
+                    "Cashier is inactive: " + authenticatedUserId
+            );
+        }
 
         PaymentRequest paymentRequest = paymentRequestRepository
                 .findById(paymentRequestId)
@@ -181,19 +194,6 @@ public class CashierReviewPaymentService {
                     "PAYMENT_REQUEST_NOT_PENDING_CASHIER",
                     "Payment request is not PENDING_CASHIER: "
                             + paymentRequest.getApprovalStatus()
-            );
-        }
-
-        AppUser cashier = appUserRepository.findById(cashierId)
-                .orElseThrow(() -> businessError(
-                        "CASHIER_NOT_FOUND",
-                        "Cashier not found: " + cashierId
-                ));
-
-        if (!Boolean.TRUE.equals(cashier.getActive())) {
-            throw businessError(
-                    "CASHIER_INACTIVE",
-                    "Cashier is inactive: " + cashierId
             );
         }
 
@@ -248,11 +248,11 @@ public class CashierReviewPaymentService {
         }
     }
 
-    private void validateCashierId(Long cashierId) {
-        if (cashierId == null || cashierId <= 0) {
+    private void validateAuthenticatedUserId(Long authenticatedUserId) {
+        if (authenticatedUserId == null || authenticatedUserId <= 0) {
             throw businessError(
-                    "INVALID_CASHIER_ID",
-                    "Cashier id must be greater than zero"
+                    "INVALID_AUTHENTICATED_USER_ID",
+                    "Authenticated user id must be greater than zero"
             );
         }
     }

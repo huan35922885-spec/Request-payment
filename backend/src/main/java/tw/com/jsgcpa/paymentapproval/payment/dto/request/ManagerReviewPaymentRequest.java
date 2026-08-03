@@ -1,15 +1,10 @@
 package tw.com.jsgcpa.paymentapproval.payment.dto.request;
 
 import jakarta.validation.constraints.NotNull;
-import jakarta.validation.constraints.Positive;
 import jakarta.validation.constraints.PositiveOrZero;
 import jakarta.validation.constraints.Size;
 
 public record ManagerReviewPaymentRequest(
-        @NotNull
-        @Positive
-        Long managerId,
-
         @NotNull
         @PositiveOrZero
         Long version,

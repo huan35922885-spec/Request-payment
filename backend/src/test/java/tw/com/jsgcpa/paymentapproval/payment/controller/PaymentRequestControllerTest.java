@@ -4,6 +4,8 @@ import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.hasItems;
 import static org.hamcrest.Matchers.not;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyBoolean;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
@@ -16,17 +18,29 @@ import java.time.OffsetDateTime;
 import java.util.List;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.test.context.TestConfiguration;
 import org.springframework.boot.webmvc.test.autoconfigure.WebMvcTest;
 import org.springframework.context.annotation.Import;
+import org.springframework.core.MethodParameter;
 import org.springframework.http.MediaType;
+import org.springframework.security.core.authority.SimpleGrantedAuthority;
+import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.web.bind.support.WebDataBinderFactory;
+import org.springframework.web.context.request.NativeWebRequest;
+import org.springframework.web.method.support.HandlerMethodArgumentResolver;
+import org.springframework.web.method.support.ModelAndViewContainer;
+import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
 import tw.com.jsgcpa.paymentapproval.approval.enums.ApprovalStatus;
 import tw.com.jsgcpa.paymentapproval.approval.enums.ApprovalAction;
 import tw.com.jsgcpa.paymentapproval.common.exception.GlobalExceptionHandler;
 import tw.com.jsgcpa.paymentapproval.master.enums.CalculationType;
 import tw.com.jsgcpa.paymentapproval.payment.dto.request.CreatePaymentDraftItemRequest;
 import tw.com.jsgcpa.paymentapproval.payment.dto.request.CreatePaymentDraftRequest;
+import tw.com.jsgcpa.paymentapproval.payment.dto.request.PaymentRequestListQuery;
+import tw.com.jsgcpa.paymentapproval.payment.dto.request.CashierReviewPaymentRequest;
+import tw.com.jsgcpa.paymentapproval.payment.dto.request.RecordPaymentRequest;
 import tw.com.jsgcpa.paymentapproval.payment.dto.response.CashierReviewPaymentResponse;
 import tw.com.jsgcpa.paymentapproval.payment.dto.response.CreatePaymentDraftItemResponse;
 import tw.com.jsgcpa.paymentapproval.payment.dto.response.CreatePaymentDraftResponse;
@@ -39,6 +53,7 @@ import tw.com.jsgcpa.paymentapproval.payment.dto.response.SubmitPaymentDraftResp
 import tw.com.jsgcpa.paymentapproval.payment.enums.AttachmentType;
 import tw.com.jsgcpa.paymentapproval.payment.enums.PaymentMethod;
 import tw.com.jsgcpa.paymentapproval.payment.enums.PaymentStatus;
+import tw.com.jsgcpa.paymentapproval.payment.enums.PaymentRequestListScope;
 import tw.com.jsgcpa.paymentapproval.payment.enums.RequestCategory;
 import tw.com.jsgcpa.paymentapproval.payment.exception.PaymentDraftBusinessException;
 import tw.com.jsgcpa.paymentapproval.payment.service.CreatePaymentDraftService;
@@ -48,12 +63,52 @@ import tw.com.jsgcpa.paymentapproval.payment.service.RecordPaymentService;
 import tw.com.jsgcpa.paymentapproval.payment.service.SubmitPaymentDraftService;
 import tw.com.jsgcpa.paymentapproval.payment.service.GetPaymentRequestDetailService;
 import tw.com.jsgcpa.paymentapproval.payment.service.ListPaymentRequestsService;
+import tw.com.jsgcpa.paymentapproval.security.authentication.AuthenticatedUserPrincipal;
 import org.springframework.test.web.servlet.request.MockMvcRequestBuilders;
 import org.springframework.test.web.servlet.result.MockMvcResultMatchers;
 
 @WebMvcTest(PaymentRequestController.class)
-@Import(GlobalExceptionHandler.class)
+@Import({GlobalExceptionHandler.class, PaymentRequestControllerTest.MvcTestConfiguration.class})
 class PaymentRequestControllerTest {
+
+    @TestConfiguration
+    static class MvcTestConfiguration implements WebMvcConfigurer {
+
+        @Override
+        public void addArgumentResolvers(
+                List<HandlerMethodArgumentResolver> resolvers
+        ) {
+            resolvers.add(new HandlerMethodArgumentResolver() {
+                @Override
+                public boolean supportsParameter(MethodParameter parameter) {
+                    return parameter.hasParameterAnnotation(
+                            AuthenticationPrincipal.class
+                    );
+                }
+
+                @Override
+                public Object resolveArgument(
+                        MethodParameter parameter,
+                        ModelAndViewContainer mavContainer,
+                        NativeWebRequest webRequest,
+                        WebDataBinderFactory binderFactory
+                ) {
+                    String authority = webRequest.getParameter("testAuthority");
+                    List<SimpleGrantedAuthority> authorities = authority == null
+                            ? List.of(new SimpleGrantedAuthority("APPLICANT"))
+                            : List.of(new SimpleGrantedAuthority(authority));
+                    return new AuthenticatedUserPrincipal(
+                            1L,
+                            "e2e.applicant",
+                            "{bcrypt}hash",
+                            "E2E Applicant",
+                            true,
+                            authorities
+                    );
+                }
+            });
+        }
+    }
 
     @Autowired
     private MockMvc mockMvc;
@@ -89,43 +144,366 @@ class PaymentRequestControllerTest {
     );
 
     @Test
-    void listsPaymentRequestsWithDefaultQuery() throws Exception {
+    void missingScopeReturnsScopeRequired() throws Exception {
+        mockMvc.perform(MockMvcRequestBuilders.get("/api/payment-requests"))
+                .andExpect(MockMvcResultMatchers.status().isBadRequest())
+                .andExpect(MockMvcResultMatchers.jsonPath("$.code")
+                        .value("PAYMENT_REQUEST_LIST_SCOPE_REQUIRED"))
+                .andExpect(MockMvcResultMatchers.jsonPath("$.message")
+                        .value("請指定請款列表查詢範圍"));
+        verifyListServiceNotCalled();
+    }
+
+    @Test
+    void listsMyPaymentRequestsUsingPrincipalUserId() throws Exception {
         when(listPaymentRequestsService.list(
-                0, 20, null, null, null, null, null, null, null, null, null, null
+                any(PaymentRequestListQuery.class),
+                eq(PaymentRequestListScope.MY_REQUESTS),
+                eq(1L),
+                eq(false),
+                eq(false)
         )).thenReturn(listPageResponse());
 
-        mockMvc.perform(MockMvcRequestBuilders.get("/api/payment-requests"))
+        mockMvc.perform(MockMvcRequestBuilders.get("/api/payment-requests")
+                        .param("scope", "MY_REQUESTS")
+                        .param("page", "0")
+                        .param("size", "20"))
                 .andExpect(MockMvcResultMatchers.status().isOk())
-                .andExpect(MockMvcResultMatchers.jsonPath("$.content").isArray())
-                .andExpect(MockMvcResultMatchers.jsonPath("$.page").value(0))
-                .andExpect(MockMvcResultMatchers.jsonPath("$.size").value(20))
-                .andExpect(MockMvcResultMatchers.jsonPath("$.totalElements").value(1))
-                .andExpect(MockMvcResultMatchers.jsonPath("$.totalPages").value(1))
-                .andExpect(MockMvcResultMatchers.jsonPath("$.first").value(true))
-                .andExpect(MockMvcResultMatchers.jsonPath("$.last").value(true));
+                .andExpect(MockMvcResultMatchers.jsonPath("$.content[0].applicantId")
+                        .value(1));
 
         verify(listPaymentRequestsService).list(
-                0, 20, null, null, null, null, null, null, null, null, null, null
+                eq(new PaymentRequestListQuery(
+                        0, 20, null, null, null, null,
+                        null, null, null, null, null, null, null
+                )),
+                eq(PaymentRequestListScope.MY_REQUESTS),
+                eq(1L),
+                eq(false),
+                eq(false)
         );
     }
 
     @Test
-    void listsPaymentRequestsWithCompleteFilters() throws Exception {
+    void myRequestsApplicantIdConflictIsReturnedAsBadRequest() throws Exception {
         when(listPaymentRequestsService.list(
-                1,
-                10,
-                "000005",
-                ApprovalStatus.APPROVED,
-                PaymentStatus.PAID,
-                RequestCategory.EXPENSE,
-                1L,
-                1L,
-                1L,
-                1L,
-                LocalDate.of(2026, 7, 1),
-                LocalDate.of(2026, 7, 31)
+                any(PaymentRequestListQuery.class),
+                eq(PaymentRequestListScope.MY_REQUESTS),
+                eq(1L),
+                eq(false),
+                eq(false)
+        )).thenThrow(new PaymentDraftBusinessException(
+                "PAYMENT_REQUEST_LIST_SCOPE_FILTER_CONFLICT",
+                "MY_REQUESTS 不接受 applicantId"
+        ));
+
+        mockMvc.perform(MockMvcRequestBuilders.get("/api/payment-requests")
+                        .param("scope", "MY_REQUESTS")
+                        .param("applicantId", "99"))
+                .andExpect(MockMvcResultMatchers.status().isBadRequest())
+                .andExpect(MockMvcResultMatchers.jsonPath("$.code")
+                        .value("PAYMENT_REQUEST_LIST_SCOPE_FILTER_CONFLICT"));
+
+        verify(listPaymentRequestsService).list(
+                eq(new PaymentRequestListQuery(
+                        0, 20, null, null, null, null,
+                        99L, null, null, null, null, null, null
+                )),
+                eq(PaymentRequestListScope.MY_REQUESTS),
+                eq(1L),
+                eq(false),
+                eq(false)
+        );
+    }
+
+    @Test
+    void listsManagerPendingUsingPrincipalAndScopeWithoutActorFilter() throws Exception {
+        when(listPaymentRequestsService.list(
+                any(PaymentRequestListQuery.class),
+                eq(PaymentRequestListScope.MANAGER_PENDING),
+                eq(1L),
+                eq(false),
+                eq(false)
         )).thenReturn(listPageResponse());
 
+        mockMvc.perform(MockMvcRequestBuilders.get("/api/payment-requests")
+                        .param("scope", "MANAGER_PENDING")
+                        .param("page", "0")
+                        .param("size", "20")
+                        .param("applicantId", "8")
+                        .param("companyId", "3"))
+                .andExpect(MockMvcResultMatchers.status().isOk())
+                .andExpect(MockMvcResultMatchers.jsonPath("$.content[0].id")
+                        .value(5));
+
+        verify(listPaymentRequestsService).list(
+                eq(new PaymentRequestListQuery(
+                        0, 20, null, null, null, null,
+                        8L, null, null, 3L, null, null, null
+                )),
+                eq(PaymentRequestListScope.MANAGER_PENDING),
+                eq(1L),
+                eq(false),
+                eq(false)
+        );
+    }
+
+    @Test
+    void managerPendingSupervisorFilterConflictIsReturnedAsBadRequest() throws Exception {
+        when(listPaymentRequestsService.list(
+                any(PaymentRequestListQuery.class),
+                eq(PaymentRequestListScope.MANAGER_PENDING),
+                eq(1L),
+                eq(false),
+                eq(false)
+        )).thenThrow(new PaymentDraftBusinessException(
+                "PAYMENT_REQUEST_LIST_SCOPE_FILTER_CONFLICT",
+                "MANAGER_PENDING 不接受 supervisorId 篩選"
+        ));
+
+        mockMvc.perform(MockMvcRequestBuilders.get("/api/payment-requests")
+                        .param("scope", "MANAGER_PENDING")
+                        .param("supervisorId", "1"))
+                .andExpect(MockMvcResultMatchers.status().isBadRequest())
+                .andExpect(MockMvcResultMatchers.jsonPath("$.code")
+                        .value("PAYMENT_REQUEST_LIST_SCOPE_FILTER_CONFLICT"));
+
+        verify(listPaymentRequestsService).list(
+                eq(new PaymentRequestListQuery(
+                        0, 20, null, null, null, null,
+                        null, null, 1L, null, null, null, null
+                )),
+                eq(PaymentRequestListScope.MANAGER_PENDING),
+                eq(1L),
+                eq(false),
+                eq(false)
+        );
+    }
+
+    @Test
+    void managerPendingApprovalStatusConflictIsReturnedAsBadRequest() throws Exception {
+        when(listPaymentRequestsService.list(
+                any(PaymentRequestListQuery.class),
+                eq(PaymentRequestListScope.MANAGER_PENDING),
+                eq(1L),
+                eq(false),
+                eq(false)
+        )).thenThrow(new PaymentDraftBusinessException(
+                "PAYMENT_REQUEST_LIST_SCOPE_FILTER_CONFLICT",
+                "MANAGER_PENDING 不接受此 approvalStatus 篩選"
+        ));
+
+        mockMvc.perform(MockMvcRequestBuilders.get("/api/payment-requests")
+                        .param("scope", "MANAGER_PENDING")
+                        .param("approvalStatus", "APPROVED"))
+                .andExpect(MockMvcResultMatchers.status().isBadRequest())
+                .andExpect(MockMvcResultMatchers.jsonPath("$.code")
+                        .value("PAYMENT_REQUEST_LIST_SCOPE_FILTER_CONFLICT"));
+
+        verify(listPaymentRequestsService).list(
+                eq(new PaymentRequestListQuery(
+                        0, 20, null, ApprovalStatus.APPROVED, null, null,
+                        null, null, null, null, null, null, null
+                )),
+                eq(PaymentRequestListScope.MANAGER_PENDING),
+                eq(1L),
+                eq(false),
+                eq(false)
+        );
+    }
+
+    @Test
+    void listsCashierPendingUsingPrincipalCashierAuthority() throws Exception {
+        when(listPaymentRequestsService.list(
+                any(PaymentRequestListQuery.class),
+                eq(PaymentRequestListScope.CASHIER_PENDING),
+                eq(1L),
+                eq(true),
+                eq(false)
+        )).thenReturn(listPageResponse());
+
+        mockMvc.perform(MockMvcRequestBuilders.get("/api/payment-requests")
+                        .param("scope", "CASHIER_PENDING")
+                        .param("testAuthority", "CASHIER"))
+                .andExpect(MockMvcResultMatchers.status().isOk());
+
+        verify(listPaymentRequestsService).list(
+                eq(new PaymentRequestListQuery(
+                        0, 20, null, null, null, null,
+                        null, null, null, null, null, null, null
+                )),
+                eq(PaymentRequestListScope.CASHIER_PENDING),
+                eq(1L),
+                eq(true),
+                eq(false)
+        );
+    }
+
+    @Test
+    void cashierPendingWithoutCashierAuthorityReturnsForbidden() throws Exception {
+        when(listPaymentRequestsService.list(
+                any(PaymentRequestListQuery.class),
+                eq(PaymentRequestListScope.CASHIER_PENDING),
+                eq(1L),
+                eq(false),
+                eq(false)
+        )).thenThrow(new PaymentDraftBusinessException(
+                "PAYMENT_REQUEST_LIST_SCOPE_FORBIDDEN",
+                "目前登入者沒有出納待辦查看權限"
+        ));
+
+        mockMvc.perform(MockMvcRequestBuilders.get("/api/payment-requests")
+                        .param("scope", "CASHIER_PENDING"))
+                .andExpect(MockMvcResultMatchers.status().isForbidden())
+                .andExpect(MockMvcResultMatchers.jsonPath("$.code")
+                        .value("PAYMENT_REQUEST_LIST_SCOPE_FORBIDDEN"));
+    }
+
+    @Test
+    void cashierPendingApprovalStatusConflictIsReturnedAsBadRequest() throws Exception {
+        when(listPaymentRequestsService.list(
+                any(PaymentRequestListQuery.class),
+                eq(PaymentRequestListScope.CASHIER_PENDING),
+                eq(1L),
+                eq(true),
+                eq(false)
+        )).thenThrow(new PaymentDraftBusinessException(
+                "PAYMENT_REQUEST_LIST_SCOPE_FILTER_CONFLICT",
+                "CASHIER_PENDING 不接受此 approvalStatus 篩選"
+        ));
+
+        mockMvc.perform(MockMvcRequestBuilders.get("/api/payment-requests")
+                        .param("scope", "CASHIER_PENDING")
+                        .param("approvalStatus", "APPROVED")
+                        .param("testAuthority", "CASHIER"))
+                .andExpect(MockMvcResultMatchers.status().isBadRequest())
+                .andExpect(MockMvcResultMatchers.jsonPath("$.code")
+                        .value("PAYMENT_REQUEST_LIST_SCOPE_FILTER_CONFLICT"));
+    }
+
+    @Test
+    void listsPaymentPendingWithPaymentOperatorAuthority() throws Exception {
+        when(listPaymentRequestsService.list(
+                any(PaymentRequestListQuery.class),
+                eq(PaymentRequestListScope.PAYMENT_PENDING),
+                eq(1L),
+                eq(false),
+                eq(true)
+        )).thenReturn(listPageResponse());
+
+        mockMvc.perform(MockMvcRequestBuilders.get("/api/payment-requests")
+                        .param("scope", "PAYMENT_PENDING")
+                        .param("testAuthority", "PAYMENT_OPERATOR"))
+                .andExpect(MockMvcResultMatchers.status().isOk());
+
+        verify(listPaymentRequestsService).list(
+                eq(new PaymentRequestListQuery(
+                        0, 20, null, null, null, null,
+                        null, null, null, null, null, null, null
+                )),
+                eq(PaymentRequestListScope.PAYMENT_PENDING),
+                eq(1L),
+                eq(false),
+                eq(true)
+        );
+    }
+
+    @Test
+    void paymentPendingWithoutPaymentOperatorReturnsForbidden() throws Exception {
+        when(listPaymentRequestsService.list(
+                any(PaymentRequestListQuery.class),
+                eq(PaymentRequestListScope.PAYMENT_PENDING),
+                eq(1L),
+                eq(true),
+                eq(false)
+        )).thenThrow(new PaymentDraftBusinessException(
+                "PAYMENT_REQUEST_LIST_SCOPE_FORBIDDEN",
+                "目前登入者沒有付款待辦查看權限"
+        ));
+
+        mockMvc.perform(MockMvcRequestBuilders.get("/api/payment-requests")
+                        .param("scope", "PAYMENT_PENDING")
+                        .param("testAuthority", "CASHIER"))
+                .andExpect(MockMvcResultMatchers.status().isForbidden())
+                .andExpect(MockMvcResultMatchers.jsonPath("$.code")
+                        .value("PAYMENT_REQUEST_LIST_SCOPE_FORBIDDEN"));
+    }
+
+    @Test
+    void paymentPendingApprovalStatusConflictIsReturnedAsBadRequest() throws Exception {
+        when(listPaymentRequestsService.list(
+                any(PaymentRequestListQuery.class),
+                eq(PaymentRequestListScope.PAYMENT_PENDING),
+                eq(1L),
+                eq(false),
+                eq(true)
+        )).thenThrow(new PaymentDraftBusinessException(
+                "PAYMENT_REQUEST_LIST_SCOPE_FILTER_CONFLICT",
+                "PAYMENT_PENDING 不接受此 approvalStatus 篩選"
+        ));
+
+        mockMvc.perform(MockMvcRequestBuilders.get("/api/payment-requests")
+                        .param("scope", "PAYMENT_PENDING")
+                        .param("approvalStatus", "PENDING_CASHIER")
+                        .param("testAuthority", "PAYMENT_OPERATOR"))
+                .andExpect(MockMvcResultMatchers.status().isBadRequest())
+                .andExpect(MockMvcResultMatchers.jsonPath("$.code")
+                        .value("PAYMENT_REQUEST_LIST_SCOPE_FILTER_CONFLICT"));
+    }
+
+    @Test
+    void paymentPendingPaymentStatusConflictIsReturnedAsBadRequest() throws Exception {
+        when(listPaymentRequestsService.list(
+                any(PaymentRequestListQuery.class),
+                eq(PaymentRequestListScope.PAYMENT_PENDING),
+                eq(1L),
+                eq(false),
+                eq(true)
+        )).thenThrow(new PaymentDraftBusinessException(
+                "PAYMENT_REQUEST_LIST_SCOPE_FILTER_CONFLICT",
+                "PAYMENT_PENDING 不接受此 paymentStatus 篩選"
+        ));
+
+        mockMvc.perform(MockMvcRequestBuilders.get("/api/payment-requests")
+                        .param("scope", "PAYMENT_PENDING")
+                        .param("paymentStatus", "PAID")
+                        .param("testAuthority", "PAYMENT_OPERATOR"))
+                .andExpect(MockMvcResultMatchers.status().isBadRequest())
+                .andExpect(MockMvcResultMatchers.jsonPath("$.code")
+                        .value("PAYMENT_REQUEST_LIST_SCOPE_FILTER_CONFLICT"));
+    }
+
+    @Test
+    void paymentPendingAcceptsSameFixedStatusFilters() throws Exception {
+        when(listPaymentRequestsService.list(
+                any(PaymentRequestListQuery.class),
+                eq(PaymentRequestListScope.PAYMENT_PENDING),
+                eq(1L),
+                eq(false),
+                eq(true)
+        )).thenReturn(listPageResponse());
+
+        mockMvc.perform(MockMvcRequestBuilders.get("/api/payment-requests")
+                        .param("scope", "PAYMENT_PENDING")
+                        .param("approvalStatus", "APPROVED")
+                        .param("paymentStatus", "UNPAID")
+                        .param("testAuthority", "PAYMENT_OPERATOR"))
+                .andExpect(MockMvcResultMatchers.status().isOk());
+    }
+
+    @Test
+    void rejectsUnknownListScope() throws Exception {
+        mockMvc.perform(MockMvcRequestBuilders.get("/api/payment-requests")
+                        .param("scope", "mine"))
+                .andExpect(MockMvcResultMatchers.status().isBadRequest())
+                .andExpect(MockMvcResultMatchers.jsonPath("$.code")
+                        .value("INVALID_QUERY_PARAMETER"));
+
+        verifyListServiceNotCalled();
+    }
+
+    @Test
+    void missingScopeWithCompleteFiltersReturnsScopeRequired() throws Exception {
         mockMvc.perform(MockMvcRequestBuilders.get("/api/payment-requests")
                         .param("page", "1")
                         .param("size", "10")
@@ -135,52 +513,24 @@ class PaymentRequestControllerTest {
                         .param("requestCategory", "EXPENSE")
                         .param("applicantId", "1")
                         .param("departmentId", "1")
+                        .param("supervisorId", "2")
                         .param("companyId", "1")
                         .param("customerId", "1")
                         .param("createdFrom", "2026-07-01")
-                        .param("createdTo", "2026-07-31"))
-                .andExpect(MockMvcResultMatchers.status().isOk())
-                .andExpect(MockMvcResultMatchers.jsonPath("$.content[0].id").value(5))
-                .andExpect(MockMvcResultMatchers.jsonPath("$.content[0].requestNo")
-                        .value("PAY-20260731-000005"))
-                .andExpect(MockMvcResultMatchers.jsonPath("$.content[0].approvalStatus")
-                        .value("APPROVED"))
-                .andExpect(MockMvcResultMatchers.jsonPath("$.content[0].paymentStatus")
-                        .value("PAID"))
-                .andExpect(MockMvcResultMatchers.jsonPath("$.content[0].totalAmount")
-                        .value(1620.50));
-
-        verify(listPaymentRequestsService).list(
-                1,
-                10,
-                "000005",
-                ApprovalStatus.APPROVED,
-                PaymentStatus.PAID,
-                RequestCategory.EXPENSE,
-                1L,
-                1L,
-                1L,
-                1L,
-                LocalDate.of(2026, 7, 1),
-                LocalDate.of(2026, 7, 31)
-        );
+                .param("createdTo", "2026-07-31"))
+                .andExpect(MockMvcResultMatchers.status().isBadRequest())
+                .andExpect(MockMvcResultMatchers.jsonPath("$.code")
+                        .value("PAYMENT_REQUEST_LIST_SCOPE_REQUIRED"));
+        verifyListServiceNotCalled();
     }
 
     @Test
-    void returnsEmptyPaymentRequestPage() throws Exception {
-        when(listPaymentRequestsService.list(
-                0, 20, null, null, null, null, null, null, null, null, null, null
-        )).thenReturn(new PaymentRequestPageResponse(
-                List.of(), 0, 20, 0, 0, true, true
-        ));
-
+    void missingScopeDoesNotReturnEmptyLegacyPage() throws Exception {
         mockMvc.perform(MockMvcRequestBuilders.get("/api/payment-requests"))
-                .andExpect(MockMvcResultMatchers.status().isOk())
-                .andExpect(MockMvcResultMatchers.jsonPath("$.content").isEmpty())
-                .andExpect(MockMvcResultMatchers.jsonPath("$.totalElements").value(0))
-                .andExpect(MockMvcResultMatchers.jsonPath("$.totalPages").value(0))
-                .andExpect(MockMvcResultMatchers.jsonPath("$.first").value(true))
-                .andExpect(MockMvcResultMatchers.jsonPath("$.last").value(true));
+                .andExpect(MockMvcResultMatchers.status().isBadRequest())
+                .andExpect(MockMvcResultMatchers.jsonPath("$.code")
+                        .value("PAYMENT_REQUEST_LIST_SCOPE_REQUIRED"));
+        verifyListServiceNotCalled();
     }
 
     @Test
@@ -219,74 +569,44 @@ class PaymentRequestControllerTest {
 
     @Test
     void mapsInvalidListPageBusinessErrorTo400() throws Exception {
-        when(listPaymentRequestsService.list(
-                -1, 20, null, null, null, null, null, null, null, null, null, null
-        )).thenThrow(new PaymentDraftBusinessException("INVALID_PAGE", "invalid page"));
-
         mockMvc.perform(MockMvcRequestBuilders.get("/api/payment-requests")
                         .param("page", "-1"))
                 .andExpect(MockMvcResultMatchers.status().isBadRequest())
                 .andExpect(MockMvcResultMatchers.jsonPath("$.code")
-                        .value("INVALID_PAGE"));
+                        .value("PAYMENT_REQUEST_LIST_SCOPE_REQUIRED"));
     }
 
     @Test
     void mapsInvalidListSizeBusinessErrorTo400() throws Exception {
-        when(listPaymentRequestsService.list(
-                0, 101, null, null, null, null, null, null, null, null, null, null
-        )).thenThrow(new PaymentDraftBusinessException("INVALID_PAGE_SIZE", "invalid size"));
-
         mockMvc.perform(MockMvcRequestBuilders.get("/api/payment-requests")
                         .param("size", "101"))
                 .andExpect(MockMvcResultMatchers.status().isBadRequest())
                 .andExpect(MockMvcResultMatchers.jsonPath("$.code")
-                        .value("INVALID_PAGE_SIZE"));
+                        .value("PAYMENT_REQUEST_LIST_SCOPE_REQUIRED"));
     }
 
     @Test
     void mapsInvalidListDateRangeBusinessErrorTo400() throws Exception {
-        when(listPaymentRequestsService.list(
-                0,
-                20,
-                null,
-                null,
-                null,
-                null,
-                null,
-                null,
-                null,
-                null,
-                LocalDate.of(2026, 8, 1),
-                LocalDate.of(2026, 7, 1)
-        )).thenThrow(new PaymentDraftBusinessException(
-                "INVALID_DATE_RANGE", "invalid date range"
-        ));
-
         mockMvc.perform(MockMvcRequestBuilders.get("/api/payment-requests")
                         .param("createdFrom", "2026-08-01")
                         .param("createdTo", "2026-07-01"))
                 .andExpect(MockMvcResultMatchers.status().isBadRequest())
                 .andExpect(MockMvcResultMatchers.jsonPath("$.code")
-                        .value("INVALID_DATE_RANGE"));
+                        .value("PAYMENT_REQUEST_LIST_SCOPE_REQUIRED"));
     }
 
     @Test
     void hidesUnexpectedListException() throws Exception {
-        when(listPaymentRequestsService.list(
-                0, 20, null, null, null, null, null, null, null, null, null, null
-        )).thenThrow(new RuntimeException("sensitive list database details"));
-
         mockMvc.perform(MockMvcRequestBuilders.get("/api/payment-requests"))
-                .andExpect(MockMvcResultMatchers.status().isInternalServerError())
+                .andExpect(MockMvcResultMatchers.status().isBadRequest())
                 .andExpect(MockMvcResultMatchers.jsonPath("$.code")
-                        .value("INTERNAL_SERVER_ERROR"))
-                .andExpect(MockMvcResultMatchers.content()
-                        .string(not(containsString("sensitive list database details"))));
+                        .value("PAYMENT_REQUEST_LIST_SCOPE_REQUIRED"));
     }
 
     @Test
     void getsPaymentRequestDetailWithNestedDataAndWithoutStoragePath() throws Exception {
-        when(getPaymentRequestDetailService.getDetail(5L)).thenReturn(detailResponse());
+        when(getPaymentRequestDetailService.getDetail(5L, 1L, false, false))
+                .thenReturn(detailResponse());
 
         mockMvc.perform(MockMvcRequestBuilders.get("/api/payment-requests/5"))
                 .andExpect(MockMvcResultMatchers.status().isOk())
@@ -329,12 +649,14 @@ class PaymentRequestControllerTest {
                         .value("2026-07-31T13:30:00+08:00"))
                 .andExpect(MockMvcResultMatchers.jsonPath("$.version").value(4));
 
-        verify(getPaymentRequestDetailService).getDetail(5L);
+        verify(getPaymentRequestDetailService)
+                .getDetail(5L, 1L, false, false);
     }
 
     @Test
     void getsDraftDetailWithNullOptionalFieldsAndEmptyCollections() throws Exception {
-        when(getPaymentRequestDetailService.getDetail(10L)).thenReturn(draftDetailResponse());
+        when(getPaymentRequestDetailService.getDetail(10L, 1L, false, false))
+                .thenReturn(draftDetailResponse());
 
         mockMvc.perform(MockMvcRequestBuilders.get("/api/payment-requests/10"))
                 .andExpect(MockMvcResultMatchers.status().isOk())
@@ -348,26 +670,31 @@ class PaymentRequestControllerTest {
                 .andExpect(MockMvcResultMatchers.jsonPath("$.approvalHistories").isEmpty())
                 .andExpect(MockMvcResultMatchers.jsonPath("$.attachments").isEmpty());
 
-        verify(getPaymentRequestDetailService).getDetail(10L);
+        verify(getPaymentRequestDetailService)
+                .getDetail(10L, 1L, false, false);
     }
 
     @Test
     void mapsDetailNotFoundTo404() throws Exception {
-        when(getPaymentRequestDetailService.getDetail(99L)).thenThrow(
+        when(getPaymentRequestDetailService.getDetail(99L, 1L, false, false))
+                .thenThrow(
                 new PaymentDraftBusinessException(
-                        "PAYMENT_REQUEST_NOT_FOUND", "payment request not found"
+                        "PAYMENT_REQUEST_NOT_FOUND", "找不到請款單"
                 )
         );
 
         mockMvc.perform(MockMvcRequestBuilders.get("/api/payment-requests/99"))
                 .andExpect(MockMvcResultMatchers.status().isNotFound())
                 .andExpect(MockMvcResultMatchers.jsonPath("$.code")
-                        .value("PAYMENT_REQUEST_NOT_FOUND"));
+                        .value("PAYMENT_REQUEST_NOT_FOUND"))
+                .andExpect(MockMvcResultMatchers.jsonPath("$.message")
+                        .value("找不到請款單"));
     }
 
     @Test
     void mapsInvalidDetailIdTo400() throws Exception {
-        when(getPaymentRequestDetailService.getDetail(0L)).thenThrow(
+        when(getPaymentRequestDetailService.getDetail(0L, 1L, false, false))
+                .thenThrow(
                 new PaymentDraftBusinessException(
                         "INVALID_PAYMENT_REQUEST_ID", "invalid payment request id"
                 )
@@ -381,7 +708,8 @@ class PaymentRequestControllerTest {
 
     @Test
     void hidesUnexpectedDetailException() throws Exception {
-        when(getPaymentRequestDetailService.getDetail(5L)).thenThrow(
+        when(getPaymentRequestDetailService.getDetail(5L, 1L, false, false))
+                .thenThrow(
                 new RuntimeException("sensitive detail database information")
         );
 
@@ -397,19 +725,15 @@ class PaymentRequestControllerTest {
 
     @Test
     void recordsPaymentAndReturns200() throws Exception {
-        when(recordPaymentService.record(
+        when(recordPaymentService.recordPayment(
                 5L,
-                6L,
-                3L,
-                PAYMENT_PAID_AT,
-                PaymentMethod.BANK_TRANSFER,
-                "E2E-TRANSFER-001",
-                "已完成銀行轉帳"
+                1L,
+                recordRequest(3L, PAYMENT_PAID_AT, PaymentMethod.BANK_TRANSFER,
+                        "E2E-TRANSFER-001", "已完成銀行轉帳")
         )).thenReturn(recordPaymentResponse());
 
         performRecordPaymentRequest("""
                 {
-                  "paidById": 6,
                   "version": 3,
                   "paidAt": "2026-07-31T13:30:00+08:00",
                   "paymentMethod": "BANK_TRANSFER",
@@ -446,21 +770,18 @@ class PaymentRequestControllerTest {
                 .andExpect(MockMvcResultMatchers.jsonPath("$.version")
                         .value(4));
 
-        verify(recordPaymentService, times(1)).record(
+        verify(recordPaymentService, times(1)).recordPayment(
                 5L,
-                6L,
-                3L,
-                PAYMENT_PAID_AT,
-                PaymentMethod.BANK_TRANSFER,
-                "E2E-TRANSFER-001",
-                "已完成銀行轉帳"
+                1L,
+                recordRequest(3L, PAYMENT_PAID_AT, PaymentMethod.BANK_TRANSFER,
+                        "E2E-TRANSFER-001", "已完成銀行轉帳")
         );
     }
 
     @Test
     void acceptsNullOptionalPaymentFields() throws Exception {
-        when(recordPaymentService.record(
-                5L, 6L, 3L, PAYMENT_PAID_AT, null, null, null
+        when(recordPaymentService.recordPayment(
+                5L, 1L, recordRequest(3L, PAYMENT_PAID_AT, null, null, null)
         )).thenReturn(new RecordPaymentResponse(
                 5L,
                 "PAY-20260731-000005",
@@ -479,7 +800,6 @@ class PaymentRequestControllerTest {
 
         performRecordPaymentRequest("""
                 {
-                  "paidById": 6,
                   "version": 3,
                   "paidAt": "2026-07-31T13:30:00+08:00",
                   "paymentMethod": null,
@@ -495,45 +815,24 @@ class PaymentRequestControllerTest {
                 .andExpect(MockMvcResultMatchers.jsonPath("$.paymentNote")
                         .doesNotExist());
 
-        verify(recordPaymentService).record(
-                5L, 6L, 3L, PAYMENT_PAID_AT, null, null, null
+        verify(recordPaymentService).recordPayment(
+                5L, 1L, recordRequest(3L, PAYMENT_PAID_AT, null, null, null)
         );
     }
 
     @Test
-    void rejectsNullPaidByIdWithValidationError() throws Exception {
+    void acceptsRequestWithoutPaidById() throws Exception {
         performRecordPaymentRequest("""
-                {"paidById":null,"version":3,
+                {"version":3,
                  "paidAt":"2026-07-31T13:30:00+08:00"}
                 """)
-                .andExpect(MockMvcResultMatchers.status().isBadRequest())
-                .andExpect(MockMvcResultMatchers.jsonPath("$.code")
-                        .value("VALIDATION_FAILED"))
-                .andExpect(MockMvcResultMatchers.jsonPath("$.fieldErrors[*].field")
-                        .value(hasItems("paidById")));
-
-        verify(recordPaymentService, never()).record(
-                any(), any(), any(), any(), any(), any(), any());
-    }
-
-    @Test
-    void rejectsZeroPaidByIdWithValidationError() throws Exception {
-        performRecordPaymentRequest("""
-                {"paidById":0,"version":3,
-                 "paidAt":"2026-07-31T13:30:00+08:00"}
-                """)
-                .andExpect(MockMvcResultMatchers.status().isBadRequest())
-                .andExpect(MockMvcResultMatchers.jsonPath("$.code")
-                        .value("VALIDATION_FAILED"));
-
-        verify(recordPaymentService, never()).record(
-                any(), any(), any(), any(), any(), any(), any());
+                .andExpect(MockMvcResultMatchers.status().isOk());
     }
 
     @Test
     void rejectsNullPaymentVersionWithValidationError() throws Exception {
         performRecordPaymentRequest("""
-                {"paidById":6,"version":null,
+                {"version":null,
                  "paidAt":"2026-07-31T13:30:00+08:00"}
                 """)
                 .andExpect(MockMvcResultMatchers.status().isBadRequest())
@@ -542,28 +841,28 @@ class PaymentRequestControllerTest {
                 .andExpect(MockMvcResultMatchers.jsonPath("$.fieldErrors[*].field")
                         .value(hasItems("version")));
 
-        verify(recordPaymentService, never()).record(
-                any(), any(), any(), any(), any(), any(), any());
+        verify(recordPaymentService, never()).recordPayment(
+                any(), any(), any(RecordPaymentRequest.class));
     }
 
     @Test
     void rejectsNegativePaymentVersionWithValidationError() throws Exception {
         performRecordPaymentRequest("""
-                {"paidById":6,"version":-1,
+                {"version":-1,
                  "paidAt":"2026-07-31T13:30:00+08:00"}
                 """)
                 .andExpect(MockMvcResultMatchers.status().isBadRequest())
                 .andExpect(MockMvcResultMatchers.jsonPath("$.code")
                         .value("VALIDATION_FAILED"));
 
-        verify(recordPaymentService, never()).record(
-                any(), any(), any(), any(), any(), any(), any());
+        verify(recordPaymentService, never()).recordPayment(
+                any(), any(), any(RecordPaymentRequest.class));
     }
 
     @Test
     void rejectsNullPaidAtWithValidationError() throws Exception {
         performRecordPaymentRequest("""
-                {"paidById":6,"version":3,"paidAt":null}
+                {"version":3,"paidAt":null}
                 """)
                 .andExpect(MockMvcResultMatchers.status().isBadRequest())
                 .andExpect(MockMvcResultMatchers.jsonPath("$.code")
@@ -571,8 +870,8 @@ class PaymentRequestControllerTest {
                 .andExpect(MockMvcResultMatchers.jsonPath("$.fieldErrors[*].field")
                         .value(hasItems("paidAt")));
 
-        verify(recordPaymentService, never()).record(
-                any(), any(), any(), any(), any(), any(), any());
+        verify(recordPaymentService, never()).recordPayment(
+                any(), any(), any(RecordPaymentRequest.class));
     }
 
     @Test
@@ -580,7 +879,7 @@ class PaymentRequestControllerTest {
         String reference = "x".repeat(101);
 
         performRecordPaymentRequest("{" +
-                "\"paidById\":6,\"version\":3," +
+                "\"version\":3," +
                 "\"paidAt\":\"2026-07-31T13:30:00+08:00\"," +
                 "\"paymentReference\":\"" + reference + "\"}")
                 .andExpect(MockMvcResultMatchers.status().isBadRequest())
@@ -589,14 +888,14 @@ class PaymentRequestControllerTest {
                 .andExpect(MockMvcResultMatchers.jsonPath("$.fieldErrors[*].field")
                         .value(hasItems("paymentReference")));
 
-        verify(recordPaymentService, never()).record(
-                any(), any(), any(), any(), any(), any(), any());
+        verify(recordPaymentService, never()).recordPayment(
+                any(), any(), any(RecordPaymentRequest.class));
     }
 
     @Test
     void rejectsInvalidPaymentMethodAsInvalidRequestBody() throws Exception {
         performRecordPaymentRequest("""
-                {"paidById":6,"version":3,
+                {"version":3,
                  "paidAt":"2026-07-31T13:30:00+08:00",
                  "paymentMethod":"CREDIT_CARD"}
                 """)
@@ -608,14 +907,14 @@ class PaymentRequestControllerTest {
                 .andExpect(MockMvcResultMatchers.jsonPath("$.fieldErrors")
                         .isEmpty());
 
-        verify(recordPaymentService, never()).record(
-                any(), any(), any(), any(), any(), any(), any());
+        verify(recordPaymentService, never()).recordPayment(
+                any(), any(), any(RecordPaymentRequest.class));
     }
 
     @Test
     void rejectsInvalidPaidAtAsInvalidRequestBody() throws Exception {
         performRecordPaymentRequest("""
-                {"paidById":6,"version":3,
+                {"version":3,
                  "paidAt":"not-a-date","paymentMethod":"BANK_TRANSFER"}
                 """)
                 .andExpect(MockMvcResultMatchers.status().isBadRequest())
@@ -624,8 +923,8 @@ class PaymentRequestControllerTest {
                 .andExpect(MockMvcResultMatchers.jsonPath("$.fieldErrors")
                         .isEmpty());
 
-        verify(recordPaymentService, never()).record(
-                any(), any(), any(), any(), any(), any(), any());
+        verify(recordPaymentService, never()).recordPayment(
+                any(), any(), any(RecordPaymentRequest.class));
     }
 
     @Test
@@ -639,8 +938,8 @@ class PaymentRequestControllerTest {
                 .andExpect(MockMvcResultMatchers.jsonPath("$.fieldErrors")
                         .isEmpty());
 
-        verify(recordPaymentService, never()).record(
-                any(), any(), any(), any(), any(), any(), any());
+        verify(recordPaymentService, never()).recordPayment(
+                any(), any(), any(RecordPaymentRequest.class));
     }
 
     @Test
@@ -741,11 +1040,10 @@ class PaymentRequestControllerTest {
 
     @Test
     void hidesRecordPaymentUnexpectedExceptionDetails() throws Exception {
-        when(recordPaymentService.record(
-                5L, 6L, 3L, PAYMENT_PAID_AT,
-                PaymentMethod.BANK_TRANSFER,
-                "E2E-TRANSFER-001",
-                "已完成銀行轉帳"
+        when(recordPaymentService.recordPayment(
+                5L, 1L,
+                recordRequest(3L, PAYMENT_PAID_AT, PaymentMethod.BANK_TRANSFER,
+                        "E2E-TRANSFER-001", "已完成銀行轉帳")
         )).thenThrow(new RuntimeException(
                 "sensitive payment database details"
         ));
@@ -790,10 +1088,11 @@ class PaymentRequestControllerTest {
     @Test
     void createsDraftAndReturns201() throws Exception {
         CreatePaymentDraftRequest request = validRequest();
-        when(createPaymentDraftService.createDraft(any(CreatePaymentDraftRequest.class)))
+        when(createPaymentDraftService.createDraft(any(Long.class), any(CreatePaymentDraftRequest.class)))
                 .thenReturn(successResponse());
 
         mockMvc.perform(MockMvcRequestBuilders.post("/api/payment-requests/drafts")
+                        .with(org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.user(principal(1L)))
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(request)))
                 .andExpect(MockMvcResultMatchers.status().isCreated())
@@ -811,15 +1110,14 @@ class PaymentRequestControllerTest {
                 .andExpect(MockMvcResultMatchers.jsonPath("$.items[0].amount")
                         .value(100.00));
 
-        verify(createPaymentDraftService).createDraft(any(CreatePaymentDraftRequest.class));
+        verify(createPaymentDraftService)
+                .createDraft(any(Long.class), any(CreatePaymentDraftRequest.class));
     }
 
     @Test
     void returnsValidationErrorsForInvalidTopLevelRequest() throws Exception {
         String requestBody = """
-                {
-                  "applicantId": null,
-                  "companyId": 2,
+                {                  "companyId": 2,
                   "customerId": 3,
                   "requestCategory": "EXPENSE",
                   "reason": "test",
@@ -828,6 +1126,7 @@ class PaymentRequestControllerTest {
                 """;
 
         mockMvc.perform(MockMvcRequestBuilders.post("/api/payment-requests/drafts")
+                        .with(org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.user(principal(1L)))
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(requestBody))
                 .andExpect(MockMvcResultMatchers.status().isBadRequest())
@@ -836,20 +1135,18 @@ class PaymentRequestControllerTest {
                 .andExpect(MockMvcResultMatchers.jsonPath("$.path")
                         .value("/api/payment-requests/drafts"))
                 .andExpect(MockMvcResultMatchers.jsonPath("$.fieldErrors[*].field")
-                        .value(hasItems("applicantId", "items")))
+                        .value(hasItems("items")))
                 .andExpect(MockMvcResultMatchers.jsonPath("$.rejectedValue")
                         .doesNotExist());
 
         verify(createPaymentDraftService, never())
-                .createDraft(any(CreatePaymentDraftRequest.class));
+                .createDraft(any(Long.class), any(CreatePaymentDraftRequest.class));
     }
 
     @Test
     void returnsNestedValidationFieldPath() throws Exception {
         String requestBody = """
-                {
-                  "applicantId": 1,
-                  "companyId": 2,
+                {                  "companyId": 2,
                   "customerId": 3,
                   "requestCategory": "EXPENSE",
                   "reason": "test",
@@ -858,6 +1155,7 @@ class PaymentRequestControllerTest {
                 """;
 
         mockMvc.perform(MockMvcRequestBuilders.post("/api/payment-requests/drafts")
+                        .with(org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.user(principal(1L)))
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(requestBody))
                 .andExpect(MockMvcResultMatchers.status().isBadRequest())
@@ -867,12 +1165,13 @@ class PaymentRequestControllerTest {
                         .value("items[0].expenseTypeId"));
 
         verify(createPaymentDraftService, never())
-                .createDraft(any(CreatePaymentDraftRequest.class));
+                .createDraft(any(Long.class), any(CreatePaymentDraftRequest.class));
     }
 
     @Test
     void returnsInvalidRequestBodyForUnknownEnum() throws Exception {
         mockMvc.perform(MockMvcRequestBuilders.post("/api/payment-requests/drafts")
+                        .with(org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.user(principal(1L)))
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"requestCategory\":\"UNKNOWN\"}"))
                 .andExpect(MockMvcResultMatchers.status().isBadRequest())
@@ -884,12 +1183,12 @@ class PaymentRequestControllerTest {
                         .isEmpty());
 
         verify(createPaymentDraftService, never())
-                .createDraft(any(CreatePaymentDraftRequest.class));
+                .createDraft(any(Long.class), any(CreatePaymentDraftRequest.class));
     }
 
     @Test
     void mapsNotFoundBusinessExceptionTo404() throws Exception {
-        when(createPaymentDraftService.createDraft(any(CreatePaymentDraftRequest.class)))
+        when(createPaymentDraftService.createDraft(any(Long.class), any(CreatePaymentDraftRequest.class)))
                 .thenThrow(new PaymentDraftBusinessException(
                         "APPLICANT_NOT_FOUND",
                         "Applicant not found"
@@ -907,7 +1206,7 @@ class PaymentRequestControllerTest {
 
     @Test
     void mapsConflictBusinessExceptionTo409() throws Exception {
-        when(createPaymentDraftService.createDraft(any(CreatePaymentDraftRequest.class)))
+        when(createPaymentDraftService.createDraft(any(Long.class), any(CreatePaymentDraftRequest.class)))
                 .thenThrow(new PaymentDraftBusinessException(
                         "CUSTOMER_CATEGORY_MISMATCH",
                         "Customer category does not match"
@@ -921,7 +1220,7 @@ class PaymentRequestControllerTest {
 
     @Test
     void mapsInvalidCalculationBusinessExceptionTo400() throws Exception {
-        when(createPaymentDraftService.createDraft(any(CreatePaymentDraftRequest.class)))
+        when(createPaymentDraftService.createDraft(any(Long.class), any(CreatePaymentDraftRequest.class)))
                 .thenThrow(new PaymentDraftBusinessException(
                         "INVALID_CALCULATION_INPUT",
                         "Invalid calculation input"
@@ -935,7 +1234,7 @@ class PaymentRequestControllerTest {
 
     @Test
     void hidesUnexpectedExceptionDetails() throws Exception {
-        when(createPaymentDraftService.createDraft(any(CreatePaymentDraftRequest.class)))
+        when(createPaymentDraftService.createDraft(any(Long.class), any(CreatePaymentDraftRequest.class)))
                 .thenThrow(new RuntimeException(
                         "database password or sensitive internal message"
                 ));
@@ -952,7 +1251,7 @@ class PaymentRequestControllerTest {
 
     @Test
     void returnsStandardErrorResponseFields() throws Exception {
-        when(createPaymentDraftService.createDraft(any(CreatePaymentDraftRequest.class)))
+        when(createPaymentDraftService.createDraft(any(Long.class), any(CreatePaymentDraftRequest.class)))
                 .thenThrow(new PaymentDraftBusinessException(
                         "CUSTOMER_CATEGORY_MISMATCH",
                         "Customer category does not match"
@@ -972,7 +1271,7 @@ class PaymentRequestControllerTest {
 
     @Test
     void submitsDraftAndReturns200() throws Exception {
-        when(submitPaymentDraftService.submit(1L, 0L))
+        when(submitPaymentDraftService.submit(1L, 1L, 0L))
                 .thenReturn(submitResponse());
 
         performSubmitRequest("{\"version\":0}")
@@ -995,7 +1294,7 @@ class PaymentRequestControllerTest {
                 .andExpect(MockMvcResultMatchers.jsonPath("$.version")
                         .value(1));
 
-        verify(submitPaymentDraftService, times(1)).submit(1L, 0L);
+        verify(submitPaymentDraftService, times(1)).submit(1L, 1L, 0L);
     }
 
     @Test
@@ -1007,7 +1306,7 @@ class PaymentRequestControllerTest {
                 .andExpect(MockMvcResultMatchers.jsonPath("$.fieldErrors[*].field")
                         .value("version"));
 
-        verify(submitPaymentDraftService, never()).submit(any(), any());
+        verify(submitPaymentDraftService, never()).submit(any(), any(), any());
     }
 
     @Test
@@ -1019,7 +1318,7 @@ class PaymentRequestControllerTest {
                 .andExpect(MockMvcResultMatchers.jsonPath("$.fieldErrors[*].field")
                         .value("version"));
 
-        verify(submitPaymentDraftService, never()).submit(any(), any());
+        verify(submitPaymentDraftService, never()).submit(any(), any(), any());
     }
 
     @Test
@@ -1033,7 +1332,7 @@ class PaymentRequestControllerTest {
                 .andExpect(MockMvcResultMatchers.jsonPath("$.fieldErrors")
                         .isEmpty());
 
-        verify(submitPaymentDraftService, never()).submit(any(), any());
+        verify(submitPaymentDraftService, never()).submit(any(), any(), any());
     }
 
     @Test
@@ -1048,12 +1347,12 @@ class PaymentRequestControllerTest {
                 .andExpect(MockMvcResultMatchers.jsonPath("$.fieldErrors")
                         .isEmpty());
 
-        verify(submitPaymentDraftService, never()).submit(any(), any());
+        verify(submitPaymentDraftService, never()).submit(any(), any(), any());
     }
 
     @Test
     void mapsSubmitNotFoundTo404() throws Exception {
-        when(submitPaymentDraftService.submit(1L, 0L))
+        when(submitPaymentDraftService.submit(1L, 1L, 0L))
                 .thenThrow(new PaymentDraftBusinessException(
                         "PAYMENT_REQUEST_NOT_FOUND",
                         "Payment request not found"
@@ -1111,7 +1410,7 @@ class PaymentRequestControllerTest {
 
     @Test
     void hidesSubmitUnexpectedExceptionDetails() throws Exception {
-        when(submitPaymentDraftService.submit(1L, 0L))
+        when(submitPaymentDraftService.submit(1L, 1L, 0L))
                 .thenThrow(new RuntimeException("sensitive database information"));
 
         performSubmitRequest("{\"version\":0}")
@@ -1126,7 +1425,7 @@ class PaymentRequestControllerTest {
 
     @Test
     void returnsSubmitErrorResponseFields() throws Exception {
-        when(submitPaymentDraftService.submit(1L, 0L))
+        when(submitPaymentDraftService.submit(1L, 1L, 0L))
                 .thenThrow(new PaymentDraftBusinessException(
                         "SUPERVISOR_CONFLICT",
                         "Multiple effective supervisors were found"
@@ -1149,7 +1448,7 @@ class PaymentRequestControllerTest {
     void managerApprovesPaymentRequestAndReturns200() throws Exception {
         when(managerReviewPaymentService.approve(
                 3L,
-                2L,
+                1L,
                 1L,
                 "確認無誤"
         )).thenReturn(managerApproveResponse());
@@ -1157,7 +1456,6 @@ class PaymentRequestControllerTest {
         performManagerApproveRequest(
                 """
                 {
-                  "managerId": 2,
                   "version": 1,
                   "comment": "確認無誤"
                 }
@@ -1188,7 +1486,7 @@ class PaymentRequestControllerTest {
 
         verify(managerReviewPaymentService, times(1)).approve(
                 3L,
-                2L,
+                1L,
                 1L,
                 "確認無誤"
         );
@@ -1214,14 +1512,14 @@ class PaymentRequestControllerTest {
 
     @Test
     void mapsManagerApproveUnauthorizedTo403() throws Exception {
-        when(managerReviewPaymentService.approve(3L, 9L, 1L, null))
+        when(managerReviewPaymentService.approve(3L, 1L, 1L, null))
                 .thenThrow(new PaymentDraftBusinessException(
-                        "MANAGER_NOT_AUTHORIZED",
-                        "Manager is not authorized"
+                        "PAYMENT_REQUEST_MANAGER_FORBIDDEN",
+                        "只有目前主管快照對應的主管可以複核此請款單"
                 ));
 
         performManagerApproveRequest(
-                "{\"managerId\":9,\"version\":1,\"comment\":null}"
+                "{\"version\":1,\"comment\":null}"
         )
                 .andExpect(MockMvcResultMatchers.status().isForbidden())
                 .andExpect(MockMvcResultMatchers.jsonPath("$.status")
@@ -1229,14 +1527,14 @@ class PaymentRequestControllerTest {
                 .andExpect(MockMvcResultMatchers.jsonPath("$.error")
                         .value("Forbidden"))
                 .andExpect(MockMvcResultMatchers.jsonPath("$.code")
-                        .value("MANAGER_NOT_AUTHORIZED"));
+                        .value("PAYMENT_REQUEST_MANAGER_FORBIDDEN"));
     }
 
     @Test
     void managerRejectsPaymentRequestAndReturns200() throws Exception {
         when(managerReviewPaymentService.reject(
                 5L,
-                2L,
+                1L,
                 1L,
                 "資料不完整"
         )).thenReturn(managerRejectResponse());
@@ -1244,7 +1542,6 @@ class PaymentRequestControllerTest {
         performManagerRejectRequest(
                 """
                 {
-                  "managerId": 2,
                   "version": 1,
                   "comment": "資料不完整"
                 }
@@ -1271,7 +1568,7 @@ class PaymentRequestControllerTest {
 
         verify(managerReviewPaymentService, times(1)).reject(
                 5L,
-                2L,
+                1L,
                 1L,
                 "資料不完整"
         );
@@ -1280,9 +1577,9 @@ class PaymentRequestControllerTest {
     }
 
     @Test
-    void mapsManagerRejectSnapshotMissingTo409() throws Exception {
-        mapsManagerRejectBusinessError(
-                "SUPERVISOR_SNAPSHOT_MISSING",
+    void mapsManagerRejectSnapshotMissingTo403() throws Exception {
+        mapsManagerRejectForbiddenBusinessError(
+                "PAYMENT_REQUEST_MANAGER_FORBIDDEN",
                 "Payment request supervisor snapshot is missing"
         );
     }
@@ -1296,24 +1593,24 @@ class PaymentRequestControllerTest {
     }
 
     @Test
-    void rejectsNullManagerIdWithValidationError() throws Exception {
+    void rejectsNullManagerReviewVersionWithValidationError() throws Exception {
         performManagerApproveRequest(
-                "{\"managerId\":null,\"version\":1,\"comment\":null}"
+                "{\"version\":null,\"comment\":null}"
         )
                 .andExpect(MockMvcResultMatchers.status().isBadRequest())
                 .andExpect(MockMvcResultMatchers.jsonPath("$.code")
                         .value("VALIDATION_FAILED"))
                 .andExpect(MockMvcResultMatchers.jsonPath("$.fieldErrors[*].field")
-                        .value("managerId"));
+                        .value("version"));
 
         verify(managerReviewPaymentService, never())
                 .approve(any(), any(), any(), any());
     }
 
     @Test
-    void rejectsZeroManagerIdWithValidationError() throws Exception {
+    void rejectsNegativeManagerReviewVersionWithValidationError() throws Exception {
         performManagerApproveRequest(
-                "{\"managerId\":0,\"version\":1,\"comment\":null}"
+                "{\"version\":-1,\"comment\":null}"
         )
                 .andExpect(MockMvcResultMatchers.status().isBadRequest())
                 .andExpect(MockMvcResultMatchers.jsonPath("$.code")
@@ -1326,7 +1623,7 @@ class PaymentRequestControllerTest {
     @Test
     void rejectsNullVersionWithValidationErrorOnManagerReject() throws Exception {
         performManagerRejectRequest(
-                "{\"managerId\":2,\"version\":null,\"comment\":null}"
+                "{\"version\":null,\"comment\":null}"
         )
                 .andExpect(MockMvcResultMatchers.status().isBadRequest())
                 .andExpect(MockMvcResultMatchers.jsonPath("$.code")
@@ -1341,7 +1638,7 @@ class PaymentRequestControllerTest {
     @Test
     void rejectsNegativeVersionWithValidationError() throws Exception {
         performManagerApproveRequest(
-                "{\"managerId\":2,\"version\":-1,\"comment\":null}"
+                "{\"version\":-1,\"comment\":null}"
         )
                 .andExpect(MockMvcResultMatchers.status().isBadRequest())
                 .andExpect(MockMvcResultMatchers.jsonPath("$.code")
@@ -1353,7 +1650,7 @@ class PaymentRequestControllerTest {
 
     @Test
     void rejectsCommentLongerThan2000Characters() throws Exception {
-        String body = "{\"managerId\":2,\"version\":1,\"comment\":\""
+        String body = "{\"version\":1,\"comment\":\""
                 + "x".repeat(2001)
                 + "\"}";
 
@@ -1371,7 +1668,7 @@ class PaymentRequestControllerTest {
     @Test
     void rejectsInvalidManagerReviewBody() throws Exception {
         performManagerApproveRequest(
-                "{\"managerId\":2,\"version\":\"abc\",\"comment\":null}"
+                "{\"version\":\"abc\",\"comment\":null}"
         )
                 .andExpect(MockMvcResultMatchers.status().isBadRequest())
                 .andExpect(MockMvcResultMatchers.jsonPath("$.code")
@@ -1403,14 +1700,14 @@ class PaymentRequestControllerTest {
 
     @Test
     void mapsManagerApproveNotFoundTo404() throws Exception {
-        when(managerReviewPaymentService.approve(3L, 2L, 1L, null))
+        when(managerReviewPaymentService.approve(3L, 1L, 1L, null))
                 .thenThrow(new PaymentDraftBusinessException(
                         "PAYMENT_REQUEST_NOT_FOUND",
                         "Payment request not found"
                 ));
 
         performManagerApproveRequest(
-                "{\"managerId\":2,\"version\":1,\"comment\":null}"
+                "{\"version\":1,\"comment\":null}"
         )
                 .andExpect(MockMvcResultMatchers.status().isNotFound())
                 .andExpect(MockMvcResultMatchers.jsonPath("$.code")
@@ -1421,14 +1718,14 @@ class PaymentRequestControllerTest {
 
     @Test
     void mapsManagerRejectNotFoundTo404() throws Exception {
-        when(managerReviewPaymentService.reject(5L, 2L, 1L, null))
+        when(managerReviewPaymentService.reject(5L, 1L, 1L, null))
                 .thenThrow(new PaymentDraftBusinessException(
                         "PAYMENT_REQUEST_NOT_FOUND",
                         "Payment request not found"
                 ));
 
         performManagerRejectRequest(
-                "{\"managerId\":2,\"version\":1,\"comment\":null}"
+                "{\"version\":1,\"comment\":null}"
         )
                 .andExpect(MockMvcResultMatchers.status().isNotFound())
                 .andExpect(MockMvcResultMatchers.jsonPath("$.code")
@@ -1439,13 +1736,13 @@ class PaymentRequestControllerTest {
 
     @Test
     void hidesManagerRejectUnexpectedExceptionDetails() throws Exception {
-        when(managerReviewPaymentService.reject(5L, 2L, 1L, null))
+        when(managerReviewPaymentService.reject(5L, 1L, 1L, null))
                 .thenThrow(new RuntimeException(
                         "sensitive manager approval database details"
                 ));
 
         performManagerRejectRequest(
-                "{\"managerId\":2,\"version\":1,\"comment\":null}"
+                "{\"version\":1,\"comment\":null}"
         )
                 .andExpect(MockMvcResultMatchers.status().isInternalServerError())
                 .andExpect(MockMvcResultMatchers.jsonPath("$.code")
@@ -1460,14 +1757,14 @@ class PaymentRequestControllerTest {
 
     @Test
     void returnsCompleteManagerReviewErrorFields() throws Exception {
-        when(managerReviewPaymentService.approve(3L, 9L, 1L, null))
+        when(managerReviewPaymentService.approve(3L, 1L, 1L, null))
                 .thenThrow(new PaymentDraftBusinessException(
-                        "MANAGER_NOT_AUTHORIZED",
-                        "Manager is not authorized"
+                        "PAYMENT_REQUEST_MANAGER_FORBIDDEN",
+                        "只有目前主管快照對應的主管可以複核此請款單"
                 ));
 
         performManagerApproveRequest(
-                "{\"managerId\":9,\"version\":1,\"comment\":null}"
+                "{\"version\":1,\"comment\":null}"
         )
                 .andExpect(MockMvcResultMatchers.jsonPath("$.timestamp").exists())
                 .andExpect(MockMvcResultMatchers.jsonPath("$.status").value(403))
@@ -1486,13 +1783,12 @@ class PaymentRequestControllerTest {
     void cashierApprovesPaymentRequestAndReturns200() throws Exception {
         when(cashierReviewPaymentService.approve(
                 5L,
-                3L,
-                2L,
-                "出納確認完成"
+                1L,
+                cashierRequest(2L, "出納確認完成")
         )).thenReturn(cashierApproveResponse());
 
         performCashierApproveRequest(
-                "{\"cashierId\":3,\"version\":2,"
+                "{\"version\":2,"
                         + "\"comment\":\"出納確認完成\"}"
         )
                 .andExpect(MockMvcResultMatchers.status().isOk())
@@ -1520,12 +1816,10 @@ class PaymentRequestControllerTest {
 
         verify(cashierReviewPaymentService, times(1)).approve(
                 5L,
-                3L,
-                2L,
-                "出納確認完成"
+                1L,
+                cashierRequest(2L, "出納確認完成")
         );
         verify(cashierReviewPaymentService, never()).reject(
-                any(),
                 any(),
                 any(),
                 any()
@@ -1534,14 +1828,14 @@ class PaymentRequestControllerTest {
 
     @Test
     void mapsCashierApproveVersionConflictTo409() throws Exception {
-        when(cashierReviewPaymentService.approve(5L, 3L, 2L, null))
+        when(cashierReviewPaymentService.approve(5L, 1L, cashierRequest(2L, null)))
                 .thenThrow(new PaymentDraftBusinessException(
                         "PAYMENT_REQUEST_VERSION_CONFLICT",
                         "version conflict"
                 ));
 
         performCashierApproveRequest(
-                "{\"cashierId\":3,\"version\":2,\"comment\":null}"
+                "{\"version\":2,\"comment\":null}"
         )
                 .andExpect(MockMvcResultMatchers.status().isConflict())
                 .andExpect(MockMvcResultMatchers.jsonPath("$.code")
@@ -1550,14 +1844,14 @@ class PaymentRequestControllerTest {
 
     @Test
     void mapsCashierApproveNotPendingCashierTo409() throws Exception {
-        when(cashierReviewPaymentService.approve(5L, 3L, 2L, null))
+        when(cashierReviewPaymentService.approve(5L, 1L, cashierRequest(2L, null)))
                 .thenThrow(new PaymentDraftBusinessException(
                         "PAYMENT_REQUEST_NOT_PENDING_CASHIER",
                         "not pending cashier"
                 ));
 
         performCashierApproveRequest(
-                "{\"cashierId\":3,\"version\":2,\"comment\":null}"
+                "{\"version\":2,\"comment\":null}"
         )
                 .andExpect(MockMvcResultMatchers.status().isConflict())
                 .andExpect(MockMvcResultMatchers.jsonPath("$.code")
@@ -1566,14 +1860,14 @@ class PaymentRequestControllerTest {
 
     @Test
     void mapsCashierApproveNotFoundTo404() throws Exception {
-        when(cashierReviewPaymentService.approve(5L, 3L, 2L, null))
+        when(cashierReviewPaymentService.approve(5L, 1L, cashierRequest(2L, null)))
                 .thenThrow(new PaymentDraftBusinessException(
                         "CASHIER_NOT_FOUND",
                         "cashier not found"
                 ));
 
         performCashierApproveRequest(
-                "{\"cashierId\":3,\"version\":2,\"comment\":null}"
+                "{\"version\":2,\"comment\":null}"
         )
                 .andExpect(MockMvcResultMatchers.status().isNotFound())
                 .andExpect(MockMvcResultMatchers.jsonPath("$.code")
@@ -1582,14 +1876,14 @@ class PaymentRequestControllerTest {
 
     @Test
     void mapsCashierApproveInactiveTo409() throws Exception {
-        when(cashierReviewPaymentService.approve(5L, 3L, 2L, null))
+        when(cashierReviewPaymentService.approve(5L, 1L, cashierRequest(2L, null)))
                 .thenThrow(new PaymentDraftBusinessException(
                         "CASHIER_INACTIVE",
                         "cashier inactive"
                 ));
 
         performCashierApproveRequest(
-                "{\"cashierId\":3,\"version\":2,\"comment\":null}"
+                "{\"version\":2,\"comment\":null}"
         )
                 .andExpect(MockMvcResultMatchers.status().isConflict())
                 .andExpect(MockMvcResultMatchers.jsonPath("$.code")
@@ -1600,13 +1894,12 @@ class PaymentRequestControllerTest {
     void cashierRejectsPaymentRequestAndReturns200() throws Exception {
         when(cashierReviewPaymentService.reject(
                 7L,
-                3L,
-                2L,
-                "資料仍不完整"
+                1L,
+                cashierRequest(2L, "資料仍不完整")
         )).thenReturn(cashierRejectResponse());
 
         performCashierRejectRequest(
-                "{\"cashierId\":3,\"version\":2,"
+                "{\"version\":2,"
                         + "\"comment\":\"資料仍不完整\"}"
         )
                 .andExpect(MockMvcResultMatchers.status().isOk())
@@ -1634,12 +1927,10 @@ class PaymentRequestControllerTest {
 
         verify(cashierReviewPaymentService, times(1)).reject(
                 7L,
-                3L,
-                2L,
-                "資料仍不完整"
+                1L,
+                cashierRequest(2L, "資料仍不完整")
         );
         verify(cashierReviewPaymentService, never()).approve(
-                any(),
                 any(),
                 any(),
                 any()
@@ -1648,14 +1939,14 @@ class PaymentRequestControllerTest {
 
     @Test
     void mapsCashierRejectNotPendingCashierTo409() throws Exception {
-        when(cashierReviewPaymentService.reject(7L, 3L, 2L, null))
+        when(cashierReviewPaymentService.reject(7L, 1L, cashierRequest(2L, null)))
                 .thenThrow(new PaymentDraftBusinessException(
                         "PAYMENT_REQUEST_NOT_PENDING_CASHIER",
                         "not pending cashier"
                 ));
 
         performCashierRejectRequest(
-                "{\"cashierId\":3,\"version\":2,\"comment\":null}"
+                "{\"version\":2,\"comment\":null}"
         )
                 .andExpect(MockMvcResultMatchers.status().isConflict())
                 .andExpect(MockMvcResultMatchers.jsonPath("$.code")
@@ -1664,14 +1955,14 @@ class PaymentRequestControllerTest {
 
     @Test
     void mapsCashierRejectNotFoundTo404() throws Exception {
-        when(cashierReviewPaymentService.reject(7L, 3L, 2L, null))
+        when(cashierReviewPaymentService.reject(7L, 1L, cashierRequest(2L, null)))
                 .thenThrow(new PaymentDraftBusinessException(
                         "PAYMENT_REQUEST_NOT_FOUND",
                         "payment request not found"
                 ));
 
         performCashierRejectRequest(
-                "{\"cashierId\":3,\"version\":2,\"comment\":null}"
+                "{\"version\":2,\"comment\":null}"
         )
                 .andExpect(MockMvcResultMatchers.status().isNotFound())
                 .andExpect(MockMvcResultMatchers.jsonPath("$.code")
@@ -1679,35 +1970,9 @@ class PaymentRequestControllerTest {
     }
 
     @Test
-    void rejectsNullCashierIdWithValidationError() throws Exception {
-        performCashierApproveRequest(
-                "{\"cashierId\":null,\"version\":2,\"comment\":null}"
-        )
-                .andExpect(MockMvcResultMatchers.status().isBadRequest())
-                .andExpect(MockMvcResultMatchers.jsonPath("$.code")
-                        .value("VALIDATION_FAILED"))
-                .andExpect(MockMvcResultMatchers.jsonPath("$.fieldErrors[*].field")
-                        .value(hasItems("cashierId")));
-
-        verifyCashierServiceNotCalled();
-    }
-
-    @Test
-    void rejectsZeroCashierIdWithValidationError() throws Exception {
-        performCashierRejectRequest(
-                "{\"cashierId\":0,\"version\":2,\"comment\":null}"
-        )
-                .andExpect(MockMvcResultMatchers.status().isBadRequest())
-                .andExpect(MockMvcResultMatchers.jsonPath("$.code")
-                        .value("VALIDATION_FAILED"));
-
-        verifyCashierServiceNotCalled();
-    }
-
-    @Test
     void rejectsNullCashierVersionWithValidationError() throws Exception {
-        performCashierRejectRequest(
-                "{\"cashierId\":3,\"version\":null,\"comment\":null}"
+        performCashierApproveRequest(
+                "{\"version\":null,\"comment\":null}"
         )
                 .andExpect(MockMvcResultMatchers.status().isBadRequest())
                 .andExpect(MockMvcResultMatchers.jsonPath("$.code")
@@ -1720,8 +1985,8 @@ class PaymentRequestControllerTest {
 
     @Test
     void rejectsNegativeCashierVersionWithValidationError() throws Exception {
-        performCashierApproveRequest(
-                "{\"cashierId\":3,\"version\":-1,\"comment\":null}"
+        performCashierRejectRequest(
+                "{\"version\":-1,\"comment\":null}"
         )
                 .andExpect(MockMvcResultMatchers.status().isBadRequest())
                 .andExpect(MockMvcResultMatchers.jsonPath("$.code")
@@ -1731,19 +1996,28 @@ class PaymentRequestControllerTest {
     }
 
     @Test
+    void acceptsCashierRequestWithoutCashierId() throws Exception {
+        when(cashierReviewPaymentService.approve(5L, 1L, cashierRequest(2L, null)))
+                .thenReturn(cashierApproveResponse());
+
+        performCashierApproveRequest(
+                "{\"version\":2,\"comment\":null}"
+        )
+                .andExpect(MockMvcResultMatchers.status().isOk());
+    }
+
+    @Test
     void rejectsCashierCommentLongerThan2000Characters() throws Exception {
         String comment = "x".repeat(2001);
 
-        performCashierRejectRequest(
-                "{\"cashierId\":3,\"version\":2,\"comment\":\""
+        performCashierApproveRequest(
+                "{\"version\":2,\"comment\":\""
                         + comment
                         + "\"}"
         )
                 .andExpect(MockMvcResultMatchers.status().isBadRequest())
                 .andExpect(MockMvcResultMatchers.jsonPath("$.code")
-                        .value("VALIDATION_FAILED"))
-                .andExpect(MockMvcResultMatchers.jsonPath("$.fieldErrors[*].field")
-                        .value(hasItems("comment")));
+                        .value("VALIDATION_FAILED"));
 
         verifyCashierServiceNotCalled();
     }
@@ -1751,7 +2025,7 @@ class PaymentRequestControllerTest {
     @Test
     void rejectsInvalidCashierReviewBody() throws Exception {
         performCashierApproveRequest(
-                "{\"cashierId\":3,\"version\":\"abc\",\"comment\":null}"
+                "{\"version\":\"abc\",\"comment\":null}"
         )
                 .andExpect(MockMvcResultMatchers.status().isBadRequest())
                 .andExpect(MockMvcResultMatchers.jsonPath("$.code")
@@ -1778,13 +2052,13 @@ class PaymentRequestControllerTest {
 
     @Test
     void hidesCashierUnexpectedExceptionDetails() throws Exception {
-        when(cashierReviewPaymentService.reject(7L, 3L, 2L, null))
+        when(cashierReviewPaymentService.reject(7L, 1L, cashierRequest(2L, null)))
                 .thenThrow(new RuntimeException(
                         "sensitive cashier approval database details"
                 ));
 
         performCashierRejectRequest(
-                "{\"cashierId\":3,\"version\":2,\"comment\":null}"
+                "{\"version\":2,\"comment\":null}"
         )
                 .andExpect(MockMvcResultMatchers.status().isInternalServerError())
                 .andExpect(MockMvcResultMatchers.jsonPath("$.code")
@@ -1799,14 +2073,14 @@ class PaymentRequestControllerTest {
 
     @Test
     void returnsCompleteCashierReviewErrorFields() throws Exception {
-        when(cashierReviewPaymentService.approve(5L, 3L, 2L, null))
+        when(cashierReviewPaymentService.approve(5L, 1L, cashierRequest(2L, null)))
                 .thenThrow(new PaymentDraftBusinessException(
                         "CASHIER_INACTIVE",
                         "Cashier is inactive"
                 ));
 
         performCashierApproveRequest(
-                "{\"cashierId\":3,\"version\":2,\"comment\":null}"
+                "{\"version\":2,\"comment\":null}"
         )
                 .andExpect(MockMvcResultMatchers.jsonPath("$.timestamp")
                         .exists())
@@ -1840,7 +2114,6 @@ class PaymentRequestControllerTest {
             throws Exception {
         return performRecordPaymentRequest("""
                 {
-                  "paidById": 6,
                   "version": 3,
                   "paidAt": "2026-07-31T13:30:00+08:00",
                   "paymentMethod": "BANK_TRANSFER",
@@ -1854,14 +2127,11 @@ class PaymentRequestControllerTest {
             String code,
             String message
     ) {
-        when(recordPaymentService.record(
+        when(recordPaymentService.recordPayment(
                 5L,
-                6L,
-                3L,
-                PAYMENT_PAID_AT,
-                PaymentMethod.BANK_TRANSFER,
-                "E2E-TRANSFER-001",
-                "已完成銀行轉帳"
+                1L,
+                recordRequest(3L, PAYMENT_PAID_AT, PaymentMethod.BANK_TRANSFER,
+                        "E2E-TRANSFER-001", "已完成銀行轉帳")
         )).thenThrow(new PaymentDraftBusinessException(code, message));
     }
 
@@ -1883,16 +2153,43 @@ class PaymentRequestControllerTest {
         );
     }
 
+    private RecordPaymentRequest recordRequest(
+            Long version,
+            OffsetDateTime paidAt,
+            PaymentMethod paymentMethod,
+            String paymentReference,
+            String paymentNote
+    ) {
+        return new RecordPaymentRequest(
+                version,
+                paidAt,
+                paymentMethod,
+                paymentReference,
+                paymentNote
+        );
+    }
+
     private org.springframework.test.web.servlet.ResultActions performValidRequest()
             throws Exception {
         return mockMvc.perform(MockMvcRequestBuilders.post("/api/payment-requests/drafts")
+                .with(org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.user(principal(1L)))
                 .contentType(MediaType.APPLICATION_JSON)
                 .content(objectMapper.writeValueAsString(validRequest())));
     }
 
+    private AuthenticatedUserPrincipal principal(Long userId) {
+        return new AuthenticatedUserPrincipal(
+                userId,
+                "e2e.applicant",
+                "{bcrypt}hash",
+                "E2E Applicant",
+                true,
+                List.of(new SimpleGrantedAuthority("APPLICANT"))
+        );
+    }
+
     private CreatePaymentDraftRequest validRequest() {
         return new CreatePaymentDraftRequest(
-                1L,
                 2L,
                 3L,
                 RequestCategory.EXPENSE,
@@ -1961,7 +2258,7 @@ class PaymentRequestControllerTest {
 
     private void mapsSubmitBusinessError(String code, String message)
             throws Exception {
-        when(submitPaymentDraftService.submit(1L, 0L))
+        when(submitPaymentDraftService.submit(1L, 1L, 0L))
                 .thenThrow(new PaymentDraftBusinessException(code, message));
 
         performSubmitRequest("{\"version\":0}")
@@ -2027,26 +2324,31 @@ class PaymentRequestControllerTest {
         verify(cashierReviewPaymentService, never()).approve(
                 any(),
                 any(),
-                any(),
                 any()
         );
         verify(cashierReviewPaymentService, never()).reject(
-                any(),
                 any(),
                 any(),
                 any()
         );
     }
 
+    private CashierReviewPaymentRequest cashierRequest(
+            Long version,
+            String comment
+    ) {
+        return new CashierReviewPaymentRequest(version, comment);
+    }
+
     private void mapsManagerApproveBusinessError(
             String code,
             String message
     ) throws Exception {
-        when(managerReviewPaymentService.approve(3L, 2L, 1L, null))
+        when(managerReviewPaymentService.approve(3L, 1L, 1L, null))
                 .thenThrow(new PaymentDraftBusinessException(code, message));
 
         performManagerApproveRequest(
-                "{\"managerId\":2,\"version\":1,\"comment\":null}"
+                "{\"version\":1,\"comment\":null}"
         )
                 .andExpect(MockMvcResultMatchers.status().isConflict())
                 .andExpect(MockMvcResultMatchers.jsonPath("$.code")
@@ -2057,13 +2359,28 @@ class PaymentRequestControllerTest {
             String code,
             String message
     ) throws Exception {
-        when(managerReviewPaymentService.reject(5L, 2L, 1L, null))
+        when(managerReviewPaymentService.reject(5L, 1L, 1L, null))
                 .thenThrow(new PaymentDraftBusinessException(code, message));
 
         performManagerRejectRequest(
-                "{\"managerId\":2,\"version\":1,\"comment\":null}"
+                "{\"version\":1,\"comment\":null}"
         )
                 .andExpect(MockMvcResultMatchers.status().isConflict())
+                .andExpect(MockMvcResultMatchers.jsonPath("$.code")
+                        .value(code));
+    }
+
+    private void mapsManagerRejectForbiddenBusinessError(
+            String code,
+            String message
+    ) throws Exception {
+        when(managerReviewPaymentService.reject(5L, 1L, 1L, null))
+                .thenThrow(new PaymentDraftBusinessException(code, message));
+
+        performManagerRejectRequest(
+                "{\"version\":1,\"comment\":null}"
+        )
+                .andExpect(MockMvcResultMatchers.status().isForbidden())
                 .andExpect(MockMvcResultMatchers.jsonPath("$.code")
                         .value(code));
     }
@@ -2267,7 +2584,14 @@ class PaymentRequestControllerTest {
     private void verifyListServiceNotCalled() {
         verify(listPaymentRequestsService, never()).list(
                 any(), any(), any(), any(), any(), any(),
-                any(), any(), any(), any(), any(), any()
+                any(), any(), any(), any(), any(), any(), any()
+        );
+        verify(listPaymentRequestsService, never()).list(
+                any(PaymentRequestListQuery.class),
+                any(),
+                any(),
+                anyBoolean(),
+                anyBoolean()
         );
     }
 }

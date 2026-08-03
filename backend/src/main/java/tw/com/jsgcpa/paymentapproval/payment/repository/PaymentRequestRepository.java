@@ -33,7 +33,7 @@ public interface PaymentRequestRepository extends JpaRepository<PaymentRequest, 
                     from PaymentRequest paymentRequest
                     join fetch paymentRequest.applicant
                     join fetch paymentRequest.department
-                    left join fetch paymentRequest.supervisorSnapshot
+                    left join fetch paymentRequest.supervisorSnapshot supervisorSnapshot
                     join fetch paymentRequest.company
                     join fetch paymentRequest.customer
                     where (cast(:requestNo as String) is null
@@ -49,6 +49,8 @@ public interface PaymentRequestRepository extends JpaRepository<PaymentRequest, 
                         or paymentRequest.applicant.id = :applicantId)
                       and (cast(:departmentId as Long) is null
                         or paymentRequest.department.id = :departmentId)
+                      and (cast(:supervisorId as Long) is null
+                        or supervisorSnapshot.id = :supervisorId)
                       and (cast(:companyId as Long) is null
                         or paymentRequest.company.id = :companyId)
                       and (cast(:customerId as Long) is null
@@ -61,6 +63,7 @@ public interface PaymentRequestRepository extends JpaRepository<PaymentRequest, 
             countQuery = """
                     select count(paymentRequest)
                     from PaymentRequest paymentRequest
+                    left join paymentRequest.supervisorSnapshot supervisorSnapshot
                     where (cast(:requestNo as String) is null
                         or lower(paymentRequest.requestNo)
                             like lower(concat('%', cast(:requestNo as String), '%')))
@@ -74,6 +77,8 @@ public interface PaymentRequestRepository extends JpaRepository<PaymentRequest, 
                         or paymentRequest.applicant.id = :applicantId)
                       and (cast(:departmentId as Long) is null
                         or paymentRequest.department.id = :departmentId)
+                      and (cast(:supervisorId as Long) is null
+                        or supervisorSnapshot.id = :supervisorId)
                       and (cast(:companyId as Long) is null
                         or paymentRequest.company.id = :companyId)
                       and (cast(:customerId as Long) is null
@@ -91,6 +96,7 @@ public interface PaymentRequestRepository extends JpaRepository<PaymentRequest, 
             @Param("requestCategory") RequestCategory requestCategory,
             @Param("applicantId") Long applicantId,
             @Param("departmentId") Long departmentId,
+            @Param("supervisorId") Long supervisorId,
             @Param("companyId") Long companyId,
             @Param("customerId") Long customerId,
             @Param("createdFrom") OffsetDateTime createdFrom,

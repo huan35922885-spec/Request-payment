@@ -112,7 +112,7 @@ class CreatePaymentDraftServiceTest {
                 ));
         stubSaves();
 
-        CreatePaymentDraftResponse response = service.createDraft(
+        CreatePaymentDraftResponse response = service.createDraft(1L,
                 request(firstItem, secondItem)
         );
 
@@ -143,7 +143,7 @@ class CreatePaymentDraftServiceTest {
                 .thenReturn(calculated("10.00"));
         stubSaves();
 
-        CreatePaymentDraftResponse response = service.createDraft(
+        CreatePaymentDraftResponse response = service.createDraft(1L,
                 request(firstItem, secondItem)
         );
         originalExtraData.put("source", "mutated");
@@ -171,15 +171,25 @@ class CreatePaymentDraftServiceTest {
 
         assertEquals(
                 RequestCategory.EXPENSE,
-                service.createDraft(request(item(1L, null, null))).requestCategory()
+                service.createDraft(1L, request(item(1L, null, null))).requestCategory()
         );
+    }
+
+    @Test
+    void rejectsInvalidApplicantId() {
+        assertCode(
+                "INVALID_APPLICANT_ID",
+                () -> service.createDraft(0L, request(item(1L, null, null)))
+        );
+        verify(appUserRepository, never()).findById(any());
+        verify(paymentRequestRepository, never()).save(any());
     }
 
     @Test
     void rejectsMissingApplicant() {
         when(appUserRepository.findById(1L)).thenReturn(Optional.empty());
 
-        assertCode("APPLICANT_NOT_FOUND", () -> service.createDraft(request(item(1L, null, null))));
+        assertCode("APPLICANT_NOT_FOUND", () -> service.createDraft(1L, request(item(1L, null, null))));
         verify(paymentRequestRepository, never()).save(any());
         verify(paymentRequestItemRepository, never()).saveAll(anyList());
     }
@@ -191,7 +201,7 @@ class CreatePaymentDraftServiceTest {
         applicant.setActive(false);
         when(appUserRepository.findById(1L)).thenReturn(Optional.of(applicant));
 
-        assertCode("APPLICANT_INACTIVE", () -> service.createDraft(request(item(1L, null, null))));
+        assertCode("APPLICANT_INACTIVE", () -> service.createDraft(1L, request(item(1L, null, null))));
     }
 
     @Test
@@ -200,7 +210,7 @@ class CreatePaymentDraftServiceTest {
         setId(applicant, 1L);
         when(appUserRepository.findById(1L)).thenReturn(Optional.of(applicant));
 
-        assertCode("APPLICANT_DEPARTMENT_MISSING", () -> service.createDraft(request(item(1L, null, null))));
+        assertCode("APPLICANT_DEPARTMENT_MISSING", () -> service.createDraft(1L, request(item(1L, null, null))));
     }
 
     @Test
@@ -213,7 +223,7 @@ class CreatePaymentDraftServiceTest {
         applicant.setDepartment(department);
         when(appUserRepository.findById(1L)).thenReturn(Optional.of(applicant));
 
-        assertCode("DEPARTMENT_INACTIVE", () -> service.createDraft(request(item(1L, null, null))));
+        assertCode("DEPARTMENT_INACTIVE", () -> service.createDraft(1L, request(item(1L, null, null))));
     }
 
     @Test
@@ -221,7 +231,7 @@ class CreatePaymentDraftServiceTest {
         validApplicant();
         when(companyRepository.findById(10L)).thenReturn(Optional.empty());
 
-        assertCode("COMPANY_NOT_FOUND", () -> service.createDraft(request(item(1L, null, null))));
+        assertCode("COMPANY_NOT_FOUND", () -> service.createDraft(1L, request(item(1L, null, null))));
     }
 
     @Test
@@ -233,7 +243,7 @@ class CreatePaymentDraftServiceTest {
         customer.setActive(false);
         when(customerRepository.findById(20L)).thenReturn(Optional.of(customer));
 
-        assertCode("CUSTOMER_INACTIVE", () -> service.createDraft(request(item(1L, null, null))));
+        assertCode("CUSTOMER_INACTIVE", () -> service.createDraft(1L, request(item(1L, null, null))));
     }
 
     @Test
@@ -241,14 +251,13 @@ class CreatePaymentDraftServiceTest {
         References references = validReferences();
         references.customer.setDefaultRequestCategory(RequestCategory.ADVANCE);
 
-        assertCode("CUSTOMER_CATEGORY_MISMATCH", () -> service.createDraft(request(item(1L, null, null))));
+        assertCode("CUSTOMER_CATEGORY_MISMATCH", () -> service.createDraft(1L, request(item(1L, null, null))));
     }
 
     @Test
     void rejectsNullRequestCategory() {
         validReferences();
         CreatePaymentDraftRequest request = new CreatePaymentDraftRequest(
-                1L,
                 10L,
                 20L,
                 null,
@@ -256,7 +265,7 @@ class CreatePaymentDraftServiceTest {
                 List.of(item(1L, null, null))
         );
 
-        assertCode("INVALID_REQUEST_CATEGORY", () -> service.createDraft(request));
+        assertCode("INVALID_REQUEST_CATEGORY", () -> service.createDraft(1L, request));
     }
 
     @Test
@@ -266,7 +275,7 @@ class CreatePaymentDraftServiceTest {
         validCustomer();
         when(expenseTypeRepository.findById(1L)).thenReturn(Optional.empty());
 
-        assertCode("EXPENSE_TYPE_NOT_FOUND", () -> service.createDraft(itemRequest()));
+        assertCode("EXPENSE_TYPE_NOT_FOUND", () -> service.createDraft(1L, itemRequest()));
         verify(paymentRequestRepository, never()).save(any());
     }
 
@@ -280,7 +289,7 @@ class CreatePaymentDraftServiceTest {
         expenseType.setActive(false);
         when(expenseTypeRepository.findById(1L)).thenReturn(Optional.of(expenseType));
 
-        assertCode("EXPENSE_TYPE_INACTIVE", () -> service.createDraft(itemRequest()));
+        assertCode("EXPENSE_TYPE_INACTIVE", () -> service.createDraft(1L, itemRequest()));
         verify(paymentRequestRepository, never()).save(any());
     }
 
@@ -295,7 +304,7 @@ class CreatePaymentDraftServiceTest {
 
         PaymentDraftBusinessException exception = assertThrows(
                 PaymentDraftBusinessException.class,
-                () -> service.createDraft(itemRequest())
+                () -> service.createDraft(1L, itemRequest())
         );
 
         assertEquals("INVALID_CALCULATION_INPUT", exception.getCode());
@@ -356,7 +365,6 @@ class CreatePaymentDraftServiceTest {
 
     private CreatePaymentDraftRequest request(CreatePaymentDraftItemRequest... items) {
         return new CreatePaymentDraftRequest(
-                1L,
                 10L,
                 20L,
                 RequestCategory.EXPENSE,

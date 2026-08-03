@@ -3,6 +3,7 @@ package tw.com.jsgcpa.paymentapproval.payment.service;
 import java.time.Clock;
 import java.time.OffsetDateTime;
 import java.time.ZoneId;
+import java.util.Objects;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.dao.OptimisticLockingFailureException;
 import org.springframework.stereotype.Service;
@@ -52,13 +53,13 @@ public class ManagerReviewPaymentService {
 
     public ManagerReviewPaymentResponse approve(
             Long paymentRequestId,
-            Long managerId,
+            Long authenticatedUserId,
             Long expectedVersion,
             String comment
     ) {
         PaymentRequest paymentRequest = validateReviewRequest(
                 paymentRequestId,
-                managerId,
+                authenticatedUserId,
                 expectedVersion
         );
         AppUser manager = paymentRequest.getSupervisorSnapshot();
@@ -99,13 +100,13 @@ public class ManagerReviewPaymentService {
 
     public ManagerReviewPaymentResponse reject(
             Long paymentRequestId,
-            Long managerId,
+            Long authenticatedUserId,
             Long expectedVersion,
             String comment
     ) {
         PaymentRequest paymentRequest = validateReviewRequest(
                 paymentRequestId,
-                managerId,
+                authenticatedUserId,
                 expectedVersion
         );
         AppUser manager = paymentRequest.getSupervisorSnapshot();
@@ -148,12 +149,11 @@ public class ManagerReviewPaymentService {
 
     private PaymentRequest validateReviewRequest(
             Long paymentRequestId,
-            Long managerId,
+            Long authenticatedUserId,
             Long expectedVersion
     ) {
         validatePaymentRequestId(paymentRequestId);
-        validateManagerId(managerId);
-        validateExpectedVersion(expectedVersion);
+        validateAuthenticatedUserId(authenticatedUserId);
 
         PaymentRequest paymentRequest = paymentRequestRepository
                 .findById(paymentRequestId)
@@ -161,6 +161,20 @@ public class ManagerReviewPaymentService {
                         "PAYMENT_REQUEST_NOT_FOUND",
                         "Payment request not found: " + paymentRequestId
                 ));
+
+        AppUser supervisorSnapshot = paymentRequest.getSupervisorSnapshot();
+        if (supervisorSnapshot == null
+                || !Objects.equals(
+                        supervisorSnapshot.getId(),
+                        authenticatedUserId
+                )) {
+            throw businessError(
+                    "PAYMENT_REQUEST_MANAGER_FORBIDDEN",
+                    "只有目前主管快照對應的主管可以複核此請款單"
+            );
+        }
+
+        validateExpectedVersion(expectedVersion);
 
         if (!expectedVersion.equals(paymentRequest.getVersion())) {
             throw businessError(
@@ -177,23 +191,6 @@ public class ManagerReviewPaymentService {
                     "PAYMENT_REQUEST_NOT_PENDING_MANAGER",
                     "Payment request is not PENDING_MANAGER: "
                             + paymentRequest.getApprovalStatus()
-            );
-        }
-
-        AppUser supervisorSnapshot = paymentRequest.getSupervisorSnapshot();
-        if (supervisorSnapshot == null) {
-            throw businessError(
-                    "SUPERVISOR_SNAPSHOT_MISSING",
-                    "Payment request supervisor snapshot is missing: "
-                            + paymentRequestId
-            );
-        }
-
-        if (!managerId.equals(supervisorSnapshot.getId())) {
-            throw businessError(
-                    "MANAGER_NOT_AUTHORIZED",
-                    "Manager is not authorized for payment request: "
-                            + paymentRequestId
             );
         }
 
@@ -227,11 +224,11 @@ public class ManagerReviewPaymentService {
         }
     }
 
-    private void validateManagerId(Long managerId) {
-        if (managerId == null || managerId <= 0) {
+    private void validateAuthenticatedUserId(Long authenticatedUserId) {
+        if (authenticatedUserId == null || authenticatedUserId <= 0) {
             throw businessError(
-                    "INVALID_MANAGER_ID",
-                    "Manager id must be greater than zero"
+                    "INVALID_AUTHENTICATED_USER_ID",
+                    "Authenticated user id must be greater than zero"
             );
         }
     }

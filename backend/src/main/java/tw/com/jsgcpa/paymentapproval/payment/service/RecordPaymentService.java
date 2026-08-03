@@ -13,6 +13,7 @@ import tw.com.jsgcpa.paymentapproval.approval.enums.ApprovalStatus;
 import tw.com.jsgcpa.paymentapproval.approval.repository.ApprovalHistoryRepository;
 import tw.com.jsgcpa.paymentapproval.organization.entity.AppUser;
 import tw.com.jsgcpa.paymentapproval.organization.repository.AppUserRepository;
+import tw.com.jsgcpa.paymentapproval.payment.dto.request.RecordPaymentRequest;
 import tw.com.jsgcpa.paymentapproval.payment.dto.response.RecordPaymentResponse;
 import tw.com.jsgcpa.paymentapproval.payment.entity.PaymentRequest;
 import tw.com.jsgcpa.paymentapproval.payment.enums.PaymentMethod;
@@ -57,19 +58,14 @@ public class RecordPaymentService {
         this.clock = clock;
     }
 
-    public RecordPaymentResponse record(
+    public RecordPaymentResponse recordPayment(
             Long paymentRequestId,
-            Long paidById,
-            Long expectedVersion,
-            OffsetDateTime paidAt,
-            PaymentMethod paymentMethod,
-            String paymentReference,
-            String paymentNote
+            Long authenticatedUserId,
+            RecordPaymentRequest request
     ) {
         validatePaymentRequestId(paymentRequestId);
-        validatePaidById(paidById);
-        validateExpectedVersion(expectedVersion);
-        validatePaidAt(paidAt);
+        validatePaidById(authenticatedUserId);
+        validateRequest(request);
 
         PaymentRequest paymentRequest = paymentRequestRepository
                 .findById(paymentRequestId)
@@ -78,11 +74,11 @@ public class RecordPaymentService {
                         "Payment request not found: " + paymentRequestId
                 ));
 
-        if (!expectedVersion.equals(paymentRequest.getVersion())) {
+        if (!request.version().equals(paymentRequest.getVersion())) {
             throw businessError(
                     "PAYMENT_REQUEST_VERSION_CONFLICT",
                     "Payment request version conflict for id " + paymentRequestId
-                            + ": expectedVersion=" + expectedVersion
+                            + ": expectedVersion=" + request.version()
                             + ", currentVersion=" + paymentRequest.getVersion()
             );
         }
@@ -102,16 +98,16 @@ public class RecordPaymentService {
             );
         }
 
-        AppUser paidBy = appUserRepository.findById(paidById)
+        AppUser paidBy = appUserRepository.findById(authenticatedUserId)
                 .orElseThrow(() -> businessError(
                         "PAID_BY_NOT_FOUND",
-                        "Payment user not found: " + paidById
+                        "Payment user not found: " + authenticatedUserId
                 ));
 
         if (!Boolean.TRUE.equals(paidBy.getActive())) {
             throw businessError(
                     "PAID_BY_INACTIVE",
-                    "Payment user is inactive: " + paidById
+                    "Payment user is inactive: " + authenticatedUserId
             );
         }
 
@@ -121,11 +117,11 @@ public class RecordPaymentService {
 
         paymentRequest.setApprovalStatus(ApprovalStatus.APPROVED);
         paymentRequest.setPaymentStatus(PaymentStatus.PAID);
-        paymentRequest.setPaidAt(paidAt);
+        paymentRequest.setPaidAt(request.paidAt());
         paymentRequest.setPaidBy(paidBy);
-        paymentRequest.setPaymentMethod(paymentMethod);
-        paymentRequest.setPaymentReference(paymentReference);
-        paymentRequest.setPaymentNote(paymentNote);
+        paymentRequest.setPaymentMethod(request.paymentMethod());
+        paymentRequest.setPaymentReference(normalize(request.paymentReference()));
+        paymentRequest.setPaymentNote(normalize(request.paymentNote()));
 
         PaymentRequest savedPaymentRequest = savePaymentRequest(
                 paymentRequestId,
@@ -140,7 +136,7 @@ public class RecordPaymentService {
         approvalHistory.setToApprovalStatus(ApprovalStatus.APPROVED);
         approvalHistory.setFromPaymentStatus(fromPaymentStatus);
         approvalHistory.setToPaymentStatus(PaymentStatus.PAID);
-        approvalHistory.setComment(paymentNote);
+        approvalHistory.setComment(normalize(request.paymentNote()));
         approvalHistory.setActedAt(recordedAt);
         approvalHistoryRepository.save(approvalHistory);
 
@@ -158,6 +154,29 @@ public class RecordPaymentService {
                 savedPaymentRequest.getPaymentNote(),
                 recordedAt,
                 savedPaymentRequest.getVersion()
+        );
+    }
+
+    @Deprecated
+    RecordPaymentResponse record(
+            Long paymentRequestId,
+            Long paidById,
+            Long expectedVersion,
+            OffsetDateTime paidAt,
+            PaymentMethod paymentMethod,
+            String paymentReference,
+            String paymentNote
+    ) {
+        return recordPayment(
+                paymentRequestId,
+                paidById,
+                new RecordPaymentRequest(
+                        expectedVersion,
+                        paidAt,
+                        paymentMethod,
+                        paymentReference,
+                        paymentNote
+                )
         );
     }
 
@@ -195,6 +214,25 @@ public class RecordPaymentService {
                     "Paid by id must be greater than zero"
             );
         }
+    }
+
+    private void validateRequest(RecordPaymentRequest request) {
+        if (request == null) {
+            throw businessError(
+                    "INVALID_PAYMENT_REQUEST",
+                    "Payment request input must not be null"
+            );
+        }
+        validateExpectedVersion(request.version());
+        validatePaidAt(request.paidAt());
+    }
+
+    private String normalize(String value) {
+        if (value == null) {
+            return null;
+        }
+        String normalized = value.trim();
+        return normalized.isEmpty() ? null : normalized;
     }
 
     private void validateExpectedVersion(Long expectedVersion) {

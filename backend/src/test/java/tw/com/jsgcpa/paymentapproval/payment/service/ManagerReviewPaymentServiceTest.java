@@ -251,7 +251,7 @@ class ManagerReviewPaymentServiceTest {
                 .thenReturn(Optional.of(paymentRequest));
 
         assertCode(
-                "SUPERVISOR_SNAPSHOT_MISSING",
+                "PAYMENT_REQUEST_MANAGER_FORBIDDEN",
                 () -> service.approve(1L, 2L, 0L, null)
         );
 
@@ -267,10 +267,31 @@ class ManagerReviewPaymentServiceTest {
                 .thenReturn(Optional.of(paymentRequest));
 
         assertCode(
-                "MANAGER_NOT_AUTHORIZED",
+                "PAYMENT_REQUEST_MANAGER_FORBIDDEN",
                 () -> service.reject(1L, 99L, 0L, null)
         );
 
+        verify(paymentRequestRepository, never()).saveAndFlush(any());
+        verify(approvalHistoryRepository, never()).save(any());
+    }
+
+    @Test
+    void rejectsNonOwnerBeforeVersionCheckAndMutation() {
+        PaymentRequest paymentRequest = pendingManagerPaymentRequest(
+                PaymentStatus.UNPAID
+        );
+        when(paymentRequestRepository.findById(1L))
+                .thenReturn(Optional.of(paymentRequest));
+
+        assertCode(
+                "PAYMENT_REQUEST_MANAGER_FORBIDDEN",
+                () -> service.approve(1L, 99L, 999L, null)
+        );
+
+        assertEquals(ApprovalStatus.PENDING_MANAGER,
+                paymentRequest.getApprovalStatus());
+        assertEquals(PaymentStatus.UNPAID, paymentRequest.getPaymentStatus());
+        assertEquals(0L, paymentRequest.getVersion());
         verify(paymentRequestRepository, never()).saveAndFlush(any());
         verify(approvalHistoryRepository, never()).save(any());
     }
@@ -331,11 +352,11 @@ class ManagerReviewPaymentServiceTest {
 
     @Test
     void rejectsInvalidManagerIds() {
-        assertCode("INVALID_MANAGER_ID",
+        assertCode("INVALID_AUTHENTICATED_USER_ID",
                 () -> service.approve(1L, null, 0L, null));
-        assertCode("INVALID_MANAGER_ID",
+        assertCode("INVALID_AUTHENTICATED_USER_ID",
                 () -> service.approve(1L, 0L, 0L, null));
-        assertCode("INVALID_MANAGER_ID",
+        assertCode("INVALID_AUTHENTICATED_USER_ID",
                 () -> service.approve(1L, -1L, 0L, null));
 
         verify(paymentRequestRepository, never()).findById(any());
@@ -343,12 +364,20 @@ class ManagerReviewPaymentServiceTest {
 
     @Test
     void rejectsInvalidExpectedVersions() {
+        PaymentRequest paymentRequest = pendingManagerPaymentRequest(
+                PaymentStatus.UNPAID
+        );
+        when(paymentRequestRepository.findById(1L))
+                .thenReturn(Optional.of(paymentRequest));
+
         assertCode("INVALID_PAYMENT_REQUEST_VERSION",
                 () -> service.approve(1L, 2L, null, null));
         assertCode("INVALID_PAYMENT_REQUEST_VERSION",
                 () -> service.approve(1L, 2L, -1L, null));
 
-        verify(paymentRequestRepository, never()).findById(any());
+        verify(paymentRequestRepository, times(2)).findById(1L);
+        verify(paymentRequestRepository, never()).saveAndFlush(any());
+        verify(approvalHistoryRepository, never()).save(any());
     }
 
     private PaymentRequest pendingManagerPaymentRequest(

@@ -12,10 +12,6 @@ import tw.com.jsgcpa.paymentapproval.payment.enums.RequestCategory;
 public record CreatePaymentDraftRequest(
         @NotNull
         @Positive
-        Long applicantId,
-
-        @NotNull
-        @Positive
         Long companyId,
 
         @NotNull

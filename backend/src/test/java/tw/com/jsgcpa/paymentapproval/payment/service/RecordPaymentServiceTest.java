@@ -35,6 +35,7 @@ import tw.com.jsgcpa.paymentapproval.approval.repository.ApprovalHistoryReposito
 import tw.com.jsgcpa.paymentapproval.organization.entity.AppUser;
 import tw.com.jsgcpa.paymentapproval.organization.repository.AppUserRepository;
 import tw.com.jsgcpa.paymentapproval.payment.dto.response.RecordPaymentResponse;
+import tw.com.jsgcpa.paymentapproval.payment.dto.request.RecordPaymentRequest;
 import tw.com.jsgcpa.paymentapproval.payment.entity.PaymentRequest;
 import tw.com.jsgcpa.paymentapproval.payment.enums.PaymentMethod;
 import tw.com.jsgcpa.paymentapproval.payment.enums.PaymentStatus;
@@ -115,6 +116,28 @@ class RecordPaymentServiceTest {
         assertEquals("已完成匯款", response.paymentNote());
         assertEquals(RECORDED_AT, response.recordedAt());
         assertEquals(4L, response.version());
+    }
+
+    @Test
+    void recordPaymentUsesAuthenticatedUserIdAsPaidBy() {
+        PaymentRequest paymentRequest = approvedUnpaidRequest();
+        AppUser paidBy = paidBy();
+        stubValidPayment(paymentRequest, paidBy);
+        stubSaveAndFlushVersion(4L);
+        RecordPaymentRequest request = new RecordPaymentRequest(
+                3L,
+                PAID_AT,
+                PaymentMethod.BANK_TRANSFER,
+                "BANK-20260730-001",
+                "付款完成"
+        );
+
+        RecordPaymentResponse response = service.recordPayment(1L, 9L, request);
+
+        assertSame(paidBy, paymentRequest.getPaidBy());
+        assertSame(paidBy, capturedHistory().getActor());
+        assertEquals(9L, response.paidById());
+        verify(appUserRepository).findById(9L);
     }
 
     @Test

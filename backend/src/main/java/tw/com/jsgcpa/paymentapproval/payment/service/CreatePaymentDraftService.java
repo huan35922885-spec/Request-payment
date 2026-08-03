@@ -64,8 +64,11 @@ public class CreatePaymentDraftService {
     }
 
     @Transactional
-    public CreatePaymentDraftResponse createDraft(CreatePaymentDraftRequest request) {
-        AppUser applicant = findApplicant(request.applicantId());
+    public CreatePaymentDraftResponse createDraft(
+            Long applicantId,
+            CreatePaymentDraftRequest request
+    ) {
+        AppUser applicant = findApplicant(applicantId);
         Department department = findApplicantDepartment(applicant);
         Company company = findCompany(request.companyId());
         Customer customer = findCustomer(request.customerId());
@@ -125,6 +128,12 @@ public class CreatePaymentDraftService {
     }
 
     private AppUser findApplicant(Long applicantId) {
+        if (applicantId == null || applicantId <= 0) {
+            throw businessError(
+                    "INVALID_APPLICANT_ID",
+                    "Applicant ID must be positive"
+            );
+        }
         AppUser applicant = appUserRepository.findById(applicantId)
                 .orElseThrow(() -> businessError(
                         "APPLICANT_NOT_FOUND",

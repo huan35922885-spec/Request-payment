@@ -4,15 +4,18 @@ import java.time.LocalDate;
 import java.time.OffsetDateTime;
 import java.time.ZoneId;
 import java.util.List;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Sort;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import tw.com.jsgcpa.paymentapproval.approval.enums.ApprovalStatus;
+import tw.com.jsgcpa.paymentapproval.payment.dto.request.PaymentRequestListQuery;
 import tw.com.jsgcpa.paymentapproval.payment.dto.response.PaymentRequestListItemResponse;
 import tw.com.jsgcpa.paymentapproval.payment.dto.response.PaymentRequestPageResponse;
 import tw.com.jsgcpa.paymentapproval.payment.entity.PaymentRequest;
+import tw.com.jsgcpa.paymentapproval.payment.enums.PaymentRequestListScope;
 import tw.com.jsgcpa.paymentapproval.payment.enums.PaymentStatus;
 import tw.com.jsgcpa.paymentapproval.payment.enums.RequestCategory;
 import tw.com.jsgcpa.paymentapproval.payment.exception.PaymentDraftBusinessException;
@@ -28,9 +31,120 @@ public class ListPaymentRequestsService {
     private static final ZoneId BUSINESS_ZONE = ZoneId.of("Asia/Taipei");
 
     private final PaymentRequestRepository paymentRequestRepository;
+    private final PaymentRequestReadAuthorizationService readAuthorizationService;
 
     public ListPaymentRequestsService(PaymentRequestRepository paymentRequestRepository) {
+        this(
+                paymentRequestRepository,
+                new PaymentRequestReadAuthorizationService()
+        );
+    }
+
+    @Autowired
+    public ListPaymentRequestsService(
+            PaymentRequestRepository paymentRequestRepository,
+            PaymentRequestReadAuthorizationService readAuthorizationService
+    ) {
         this.paymentRequestRepository = paymentRequestRepository;
+        this.readAuthorizationService = readAuthorizationService;
+    }
+
+    public PaymentRequestPageResponse list(
+            PaymentRequestListQuery query,
+            PaymentRequestListScope scope,
+            Long authenticatedUserId
+    ) {
+        return list(query, scope, authenticatedUserId, false, false);
+    }
+
+    public PaymentRequestPageResponse list(
+            PaymentRequestListQuery query,
+            PaymentRequestListScope scope,
+            Long authenticatedUserId,
+            boolean hasCashierAuthority
+    ) {
+        return list(
+                query,
+                scope,
+                authenticatedUserId,
+                hasCashierAuthority,
+                false
+        );
+    }
+
+    public PaymentRequestPageResponse list(
+            PaymentRequestListQuery query,
+            PaymentRequestListScope scope,
+            Long authenticatedUserId,
+            boolean hasCashierAuthority,
+            boolean hasPaymentOperatorAuthority
+    ) {
+        if (scope == null) {
+            throw businessError(
+                    "PAYMENT_REQUEST_LIST_SCOPE_REQUIRED",
+                    "請指定請款列表查詢範圍"
+            );
+        }
+        readAuthorizationService.requireCashierAuthority(
+                scope,
+                hasCashierAuthority
+        );
+        readAuthorizationService.requirePaymentOperatorAuthority(
+                scope,
+                hasPaymentOperatorAuthority
+        );
+        readAuthorizationService.validateSupervisorFilter(
+                scope,
+                query.supervisorId()
+        );
+
+        Long scopedApplicantId = readAuthorizationService
+                .resolveApplicantIdForList(scope, authenticatedUserId);
+        Long scopedSupervisorId = readAuthorizationService
+                .resolveSupervisorIdForList(scope, authenticatedUserId);
+        ApprovalStatus scopedApprovalStatus = readAuthorizationService
+                .resolveApprovalStatusForList(scope, query.approvalStatus());
+
+        if (scope == PaymentRequestListScope.MY_REQUESTS
+                && query.applicantId() != null) {
+            throw businessError(
+                    "PAYMENT_REQUEST_LIST_SCOPE_FILTER_CONFLICT",
+                    "MY_REQUESTS 不接受 applicantId"
+            );
+        }
+
+        Long applicantId = scope == PaymentRequestListScope.MY_REQUESTS
+                ? scopedApplicantId
+                : query.applicantId();
+        Long supervisorId = scope == PaymentRequestListScope.MANAGER_PENDING
+                ? scopedSupervisorId
+                : query.supervisorId();
+        ApprovalStatus approvalStatus = scope == PaymentRequestListScope.MANAGER_PENDING
+                || scope == PaymentRequestListScope.CASHIER_PENDING
+                || scope == PaymentRequestListScope.PAYMENT_PENDING
+                ? scopedApprovalStatus
+                : query.approvalStatus();
+        PaymentStatus paymentStatus = readAuthorizationService
+                .resolvePaymentStatusForList(scope, query.paymentStatus());
+        if (scope != PaymentRequestListScope.PAYMENT_PENDING) {
+            paymentStatus = query.paymentStatus();
+        }
+
+        return list(
+                query.page(),
+                query.size(),
+                query.requestNo(),
+                approvalStatus,
+                paymentStatus,
+                query.requestCategory(),
+                applicantId,
+                query.departmentId(),
+                supervisorId,
+                query.companyId(),
+                query.customerId(),
+                query.createdFrom(),
+                query.createdTo()
+        );
     }
 
     public PaymentRequestPageResponse list(
@@ -47,6 +161,38 @@ public class ListPaymentRequestsService {
             LocalDate createdFrom,
             LocalDate createdTo
     ) {
+        return list(
+                page,
+                size,
+                requestNo,
+                approvalStatus,
+                paymentStatus,
+                requestCategory,
+                applicantId,
+                departmentId,
+                null,
+                companyId,
+                customerId,
+                createdFrom,
+                createdTo
+        );
+    }
+
+    public PaymentRequestPageResponse list(
+            Integer page,
+            Integer size,
+            String requestNo,
+            ApprovalStatus approvalStatus,
+            PaymentStatus paymentStatus,
+            RequestCategory requestCategory,
+            Long applicantId,
+            Long departmentId,
+            Long supervisorId,
+            Long companyId,
+            Long customerId,
+            LocalDate createdFrom,
+            LocalDate createdTo
+    ) {
         int effectivePage = page == null ? DEFAULT_PAGE : page;
         int effectiveSize = size == null ? DEFAULT_SIZE : size;
 
@@ -54,6 +200,7 @@ public class ListPaymentRequestsService {
         validateSize(effectiveSize);
         validateFilterId(applicantId);
         validateFilterId(departmentId);
+        validateFilterId(supervisorId);
         validateFilterId(companyId);
         validateFilterId(customerId);
 
@@ -77,6 +224,7 @@ public class ListPaymentRequestsService {
                 requestCategory,
                 applicantId,
                 departmentId,
+                supervisorId,
                 companyId,
                 customerId,
                 createdFromStart,

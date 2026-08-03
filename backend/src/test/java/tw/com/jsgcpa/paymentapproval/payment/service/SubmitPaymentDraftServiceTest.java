@@ -85,7 +85,7 @@ class SubmitPaymentDraftServiceTest {
         )).thenReturn(List.of(departmentSupervisor));
         stubSaveAndFlushIncrementsVersion();
 
-        SubmitPaymentDraftResponse response = service.submit(1L, 0L);
+        SubmitPaymentDraftResponse response = service.submit(1L, 3L, 0L);
 
         assertSame(departmentSupervisor.getSupervisor(), paymentRequest.getSupervisorSnapshot());
         assertEquals(ApprovalStatus.PENDING_MANAGER, paymentRequest.getApprovalStatus());
@@ -116,7 +116,7 @@ class SubmitPaymentDraftServiceTest {
         )).thenReturn(List.of(departmentSupervisor));
         stubSaveAndFlushIncrementsVersion();
 
-        service.submit(1L, 0L);
+        service.submit(1L, 3L, 0L);
 
         ArgumentCaptor<ApprovalHistory> captor =
                 ArgumentCaptor.forClass(ApprovalHistory.class);
@@ -134,12 +134,52 @@ class SubmitPaymentDraftServiceTest {
     }
 
     @Test
+    void rejectsNonApplicantBeforeVersionAndSupervisorProcessing() {
+        PaymentRequest paymentRequest = draftPaymentRequest();
+        when(paymentRequestRepository.findById(1L))
+                .thenReturn(Optional.of(paymentRequest));
+
+        assertCode(
+                "PAYMENT_REQUEST_SUBMIT_FORBIDDEN",
+                () -> service.submit(1L, 999L, 99L)
+        );
+
+        assertEquals(ApprovalStatus.DRAFT, paymentRequest.getApprovalStatus());
+        assertEquals(PaymentStatus.UNPAID, paymentRequest.getPaymentStatus());
+        assertEquals(0L, paymentRequest.getVersion());
+        assertEquals(null, paymentRequest.getSupervisorSnapshot());
+        assertEquals(null, paymentRequest.getSubmittedAt());
+        verify(departmentSupervisorRepository, never())
+                .findEffectiveSupervisors(any(), any());
+        verify(paymentRequestRepository, never()).saveAndFlush(any());
+        verify(approvalHistoryRepository, never()).save(any());
+    }
+
+    @Test
+    void rejectsInvalidAuthenticatedUserIdsBeforeLoadingRequest() {
+        assertCode(
+                "INVALID_AUTHENTICATED_USER_ID",
+                () -> service.submit(1L, null, 0L)
+        );
+        assertCode(
+                "INVALID_AUTHENTICATED_USER_ID",
+                () -> service.submit(1L, 0L, 0L)
+        );
+        assertCode(
+                "INVALID_AUTHENTICATED_USER_ID",
+                () -> service.submit(1L, -1L, 0L)
+        );
+
+        verify(paymentRequestRepository, never()).findById(any());
+    }
+
+    @Test
     void rejectsMissingPaymentRequest() {
         when(paymentRequestRepository.findById(1L)).thenReturn(Optional.empty());
 
         assertCode(
                 "PAYMENT_REQUEST_NOT_FOUND",
-                () -> service.submit(1L, 0L)
+                () -> service.submit(1L, 3L, 0L)
         );
 
         verify(departmentSupervisorRepository, never())
@@ -157,7 +197,7 @@ class SubmitPaymentDraftServiceTest {
 
         PaymentDraftBusinessException exception = assertCode(
                 "PAYMENT_REQUEST_VERSION_CONFLICT",
-                () -> service.submit(1L, 0L)
+                () -> service.submit(1L, 3L, 0L)
         );
 
         assertEquals(true, exception.getMessage().contains("paymentRequestId")
@@ -183,7 +223,7 @@ class SubmitPaymentDraftServiceTest {
 
             assertCode(
                     "PAYMENT_REQUEST_NOT_DRAFT",
-                    () -> service.submit(1L, 0L)
+                    () -> service.submit(1L, 3L, 0L)
             );
         }
 
@@ -202,7 +242,7 @@ class SubmitPaymentDraftServiceTest {
 
         assertCode(
                 "PAYMENT_REQUEST_DEPARTMENT_MISSING",
-                () -> service.submit(1L, 0L)
+                () -> service.submit(1L, 3L, 0L)
         );
 
         verify(departmentSupervisorRepository, never())
@@ -221,7 +261,7 @@ class SubmitPaymentDraftServiceTest {
 
         assertCode(
                 "SUPERVISOR_NOT_FOUND",
-                () -> service.submit(1L, 0L)
+                () -> service.submit(1L, 3L, 0L)
         );
     }
 
@@ -239,7 +279,7 @@ class SubmitPaymentDraftServiceTest {
 
         assertCode(
                 "SUPERVISOR_CONFLICT",
-                () -> service.submit(1L, 0L)
+                () -> service.submit(1L, 3L, 0L)
         );
 
         verify(paymentRequestRepository, never()).saveAndFlush(any());
@@ -259,7 +299,7 @@ class SubmitPaymentDraftServiceTest {
 
         assertCode(
                 "SUPERVISOR_INACTIVE",
-                () -> service.submit(1L, 0L)
+                () -> service.submit(1L, 3L, 0L)
         );
 
         assertEquals(null, paymentRequest.getSupervisorSnapshot());
@@ -282,7 +322,7 @@ class SubmitPaymentDraftServiceTest {
 
         assertCode(
                 "SUPERVISOR_NOT_FOUND",
-                () -> service.submit(1L, 0L)
+                () -> service.submit(1L, 3L, 0L)
         );
     }
 
@@ -298,7 +338,7 @@ class SubmitPaymentDraftServiceTest {
         )).thenReturn(List.of(departmentSupervisor));
         stubSaveAndFlushIncrementsVersion();
 
-        service.submit(1L, 0L);
+        service.submit(1L, 3L, 0L);
 
         verify(departmentSupervisorRepository).findEffectiveSupervisors(
                 10L,
@@ -324,7 +364,7 @@ class SubmitPaymentDraftServiceTest {
 
         assertCode(
                 "PAYMENT_REQUEST_VERSION_CONFLICT",
-                () -> service.submit(1L, 0L)
+                () -> service.submit(1L, 3L, 0L)
         );
 
         verify(approvalHistoryRepository, never()).save(any());
@@ -346,7 +386,7 @@ class SubmitPaymentDraftServiceTest {
 
         RuntimeException exception = assertThrows(
                 RuntimeException.class,
-                () -> service.submit(1L, 0L)
+                () -> service.submit(1L, 3L, 0L)
         );
 
         assertEquals("history save failed", exception.getMessage());
@@ -354,19 +394,33 @@ class SubmitPaymentDraftServiceTest {
 
     @Test
     void rejectsInvalidPaymentRequestIds() {
-        assertCode("INVALID_PAYMENT_REQUEST_ID", () -> service.submit(null, 0L));
-        assertCode("INVALID_PAYMENT_REQUEST_ID", () -> service.submit(0L, 0L));
-        assertCode("INVALID_PAYMENT_REQUEST_ID", () -> service.submit(-1L, 0L));
+        assertCode("INVALID_PAYMENT_REQUEST_ID", () -> service.submit(null, 3L, 0L));
+        assertCode("INVALID_PAYMENT_REQUEST_ID", () -> service.submit(0L, 3L, 0L));
+        assertCode("INVALID_PAYMENT_REQUEST_ID", () -> service.submit(-1L, 3L, 0L));
 
         verify(paymentRequestRepository, never()).findById(any());
     }
 
     @Test
     void rejectsInvalidExpectedVersions() {
-        assertCode("INVALID_PAYMENT_REQUEST_VERSION", () -> service.submit(1L, null));
-        assertCode("INVALID_PAYMENT_REQUEST_VERSION", () -> service.submit(1L, -1L));
+        PaymentRequest paymentRequest = draftPaymentRequest();
+        when(paymentRequestRepository.findById(1L))
+                .thenReturn(Optional.of(paymentRequest));
 
-        verify(paymentRequestRepository, never()).findById(any());
+        assertCode(
+                "INVALID_PAYMENT_REQUEST_VERSION",
+                () -> service.submit(1L, 3L, null)
+        );
+        assertCode(
+                "INVALID_PAYMENT_REQUEST_VERSION",
+                () -> service.submit(1L, 3L, -1L)
+        );
+
+        verify(paymentRequestRepository, times(2)).findById(1L);
+        verify(departmentSupervisorRepository, never())
+                .findEffectiveSupervisors(any(), any());
+        verify(paymentRequestRepository, never()).saveAndFlush(any());
+        verify(approvalHistoryRepository, never()).save(any());
     }
 
     private PaymentRequest draftPaymentRequest() {

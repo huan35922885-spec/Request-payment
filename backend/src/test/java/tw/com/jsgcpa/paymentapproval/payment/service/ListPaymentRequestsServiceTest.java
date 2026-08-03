@@ -8,6 +8,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -37,6 +38,8 @@ import tw.com.jsgcpa.paymentapproval.master.entity.Customer;
 import tw.com.jsgcpa.paymentapproval.organization.entity.AppUser;
 import tw.com.jsgcpa.paymentapproval.organization.entity.Department;
 import tw.com.jsgcpa.paymentapproval.payment.entity.PaymentRequest;
+import tw.com.jsgcpa.paymentapproval.payment.dto.request.PaymentRequestListQuery;
+import tw.com.jsgcpa.paymentapproval.payment.enums.PaymentRequestListScope;
 import tw.com.jsgcpa.paymentapproval.payment.enums.PaymentStatus;
 import tw.com.jsgcpa.paymentapproval.payment.enums.RequestCategory;
 import tw.com.jsgcpa.paymentapproval.payment.exception.PaymentDraftBusinessException;
@@ -50,11 +53,452 @@ class ListPaymentRequestsServiceTest {
     @Mock
     private PaymentRequestRepository paymentRequestRepository;
 
+    @Mock
+    private PaymentRequestReadAuthorizationService readAuthorizationService;
+
     private ListPaymentRequestsService service;
 
     @BeforeEach
     void setUp() {
-        service = new ListPaymentRequestsService(paymentRequestRepository);
+        service = new ListPaymentRequestsService(
+                paymentRequestRepository,
+                readAuthorizationService
+        );
+    }
+
+    @Test
+    void myRequestsForcesPrincipalApplicantIdAndPreservesAllFilters() {
+        whenSearchReturns(Page.empty());
+        when(readAuthorizationService.resolveApplicantIdForList(
+                PaymentRequestListScope.MY_REQUESTS,
+                42L
+        )).thenReturn(42L);
+
+        service.list(
+                new PaymentRequestListQuery(
+                        0,
+                        20,
+                        "PAY-42",
+                        ApprovalStatus.APPROVED,
+                        PaymentStatus.PAID,
+                        RequestCategory.EXPENSE,
+                        null,
+                        2L,
+                        3L,
+                        4L,
+                        5L,
+                        LocalDate.of(2026, 7, 1),
+                        LocalDate.of(2026, 7, 31)
+                ),
+                PaymentRequestListScope.MY_REQUESTS,
+                42L
+        );
+
+        verify(paymentRequestRepository).search(
+                eq("PAY-42"),
+                eq(ApprovalStatus.APPROVED),
+                eq(PaymentStatus.PAID),
+                eq(RequestCategory.EXPENSE),
+                eq(42L),
+                eq(2L),
+                eq(3L),
+                eq(4L),
+                eq(5L),
+                any(),
+                any(),
+                any(Pageable.class)
+        );
+    }
+
+    @Test
+    void myRequestsRejectsExternalApplicantIdBeforeRepositorySearch() {
+        when(readAuthorizationService.resolveApplicantIdForList(
+                PaymentRequestListScope.MY_REQUESTS,
+                42L
+        )).thenReturn(42L);
+
+        PaymentDraftBusinessException exception = assertThrows(
+                PaymentDraftBusinessException.class,
+                () -> service.list(
+                        new PaymentRequestListQuery(
+                                0,
+                                20,
+                                null,
+                                null,
+                                null,
+                                null,
+                                99L,
+                                null,
+                                null,
+                                null,
+                                null,
+                                null,
+                                null
+                        ),
+                        PaymentRequestListScope.MY_REQUESTS,
+                        42L
+                )
+        );
+
+        assertEquals(
+                "PAYMENT_REQUEST_LIST_SCOPE_FILTER_CONFLICT",
+                exception.getCode()
+        );
+        verifySearchNeverCalled();
+    }
+
+    @Test
+    void myRequestsDoesNotAddImplicitStatusFilter() {
+        whenSearchReturns(Page.empty());
+        when(readAuthorizationService.resolveApplicantIdForList(
+                PaymentRequestListScope.MY_REQUESTS,
+                42L
+        )).thenReturn(42L);
+
+        service.list(
+                new PaymentRequestListQuery(
+                        0, 20, null, null, null, null,
+                        null, null, null, null, null, null, null
+                ),
+                PaymentRequestListScope.MY_REQUESTS,
+                42L
+        );
+
+        verify(paymentRequestRepository).search(
+                any(),
+                eq(null),
+                eq(null),
+                any(),
+                eq(42L),
+                any(),
+                any(),
+                any(),
+                any(),
+                any(),
+                any(),
+                any(Pageable.class)
+        );
+    }
+
+    @Test
+    void managerPendingForcesPrincipalSupervisorAndPendingManagerStatus() {
+        whenSearchReturns(Page.empty());
+        when(readAuthorizationService.resolveSupervisorIdForList(
+                PaymentRequestListScope.MANAGER_PENDING,
+                42L
+        )).thenReturn(42L);
+        when(readAuthorizationService.resolveApprovalStatusForList(
+                PaymentRequestListScope.MANAGER_PENDING,
+                null
+        )).thenReturn(ApprovalStatus.PENDING_MANAGER);
+
+        service.list(
+                new PaymentRequestListQuery(
+                        1,
+                        10,
+                        "PAY-42",
+                        null,
+                        PaymentStatus.UNPAID,
+                        RequestCategory.EXPENSE,
+                        7L,
+                        2L,
+                        null,
+                        3L,
+                        4L,
+                        LocalDate.of(2026, 7, 1),
+                        LocalDate.of(2026, 7, 31)
+                ),
+                PaymentRequestListScope.MANAGER_PENDING,
+                42L
+        );
+
+        verify(paymentRequestRepository).search(
+                eq("PAY-42"),
+                eq(ApprovalStatus.PENDING_MANAGER),
+                eq(PaymentStatus.UNPAID),
+                eq(RequestCategory.EXPENSE),
+                eq(7L),
+                eq(2L),
+                eq(42L),
+                eq(3L),
+                eq(4L),
+                any(),
+                any(),
+                any(Pageable.class)
+        );
+    }
+
+    @Test
+    void managerPendingRejectsSupervisorFilterBeforeRepositorySearch() {
+        doThrow(new PaymentDraftBusinessException(
+                "PAYMENT_REQUEST_LIST_SCOPE_FILTER_CONFLICT",
+                "MANAGER_PENDING 不接受 supervisorId 篩選"
+        )).when(readAuthorizationService).validateSupervisorFilter(
+                PaymentRequestListScope.MANAGER_PENDING,
+                42L
+        );
+
+        PaymentDraftBusinessException exception = assertThrows(
+                PaymentDraftBusinessException.class,
+                () -> service.list(
+                        new PaymentRequestListQuery(
+                                0, 20, null, null, null, null,
+                                null, null, 42L, null, null, null, null
+                        ),
+                        PaymentRequestListScope.MANAGER_PENDING,
+                        42L
+                )
+        );
+
+        assertEquals(
+                "PAYMENT_REQUEST_LIST_SCOPE_FILTER_CONFLICT",
+                exception.getCode()
+        );
+        verifySearchNeverCalled();
+    }
+
+    @Test
+    void managerPendingRejectsApprovalStatusOutsideScopeBeforeRepositorySearch() {
+        doThrow(new PaymentDraftBusinessException(
+                "PAYMENT_REQUEST_LIST_SCOPE_FILTER_CONFLICT",
+                "MANAGER_PENDING 不接受此 approvalStatus 篩選"
+        )).when(readAuthorizationService).resolveApprovalStatusForList(
+                PaymentRequestListScope.MANAGER_PENDING,
+                ApprovalStatus.APPROVED
+        );
+
+        PaymentDraftBusinessException exception = assertThrows(
+                PaymentDraftBusinessException.class,
+                () -> service.list(
+                        new PaymentRequestListQuery(
+                                0, 20, null, ApprovalStatus.APPROVED, null, null,
+                                null, null, null, null, null, null, null
+                        ),
+                        PaymentRequestListScope.MANAGER_PENDING,
+                        42L
+                )
+        );
+
+        assertEquals(
+                "PAYMENT_REQUEST_LIST_SCOPE_FILTER_CONFLICT",
+                exception.getCode()
+        );
+        verifySearchNeverCalled();
+    }
+
+    @Test
+    void managerPendingAcceptsSameApprovalStatusAndStillForcesPrincipalScope() {
+        whenSearchReturns(Page.empty());
+        when(readAuthorizationService.resolveSupervisorIdForList(
+                PaymentRequestListScope.MANAGER_PENDING,
+                42L
+        )).thenReturn(42L);
+        when(readAuthorizationService.resolveApprovalStatusForList(
+                PaymentRequestListScope.MANAGER_PENDING,
+                ApprovalStatus.PENDING_MANAGER
+        )).thenReturn(ApprovalStatus.PENDING_MANAGER);
+
+        service.list(
+                new PaymentRequestListQuery(
+                        0, 20, null, ApprovalStatus.PENDING_MANAGER, null, null,
+                        null, null, null, null, null, null, null
+                ),
+                PaymentRequestListScope.MANAGER_PENDING,
+                42L
+        );
+
+        verify(paymentRequestRepository).search(
+                any(),
+                eq(ApprovalStatus.PENDING_MANAGER),
+                any(),
+                any(),
+                any(),
+                any(),
+                eq(42L),
+                any(),
+                any(),
+                any(),
+                any(),
+                any(Pageable.class)
+        );
+    }
+
+    @Test
+    void cashierPendingWithAuthorityForcesPendingCashierAndPreservesNarrowingFilters() {
+        whenSearchReturns(Page.empty());
+        when(readAuthorizationService.resolveApprovalStatusForList(
+                PaymentRequestListScope.CASHIER_PENDING,
+                null
+        )).thenReturn(ApprovalStatus.PENDING_CASHIER);
+
+        service.list(
+                new PaymentRequestListQuery(
+                        1,
+                        10,
+                        "PAY-42",
+                        null,
+                        PaymentStatus.UNPAID,
+                        RequestCategory.EXPENSE,
+                        7L,
+                        2L,
+                        42L,
+                        3L,
+                        4L,
+                        LocalDate.of(2026, 7, 1),
+                        LocalDate.of(2026, 7, 31)
+                ),
+                PaymentRequestListScope.CASHIER_PENDING,
+                42L,
+                true
+        );
+
+        verify(readAuthorizationService).requireCashierAuthority(
+                PaymentRequestListScope.CASHIER_PENDING,
+                true
+        );
+        verify(paymentRequestRepository).search(
+                eq("PAY-42"),
+                eq(ApprovalStatus.PENDING_CASHIER),
+                eq(PaymentStatus.UNPAID),
+                eq(RequestCategory.EXPENSE),
+                eq(7L),
+                eq(2L),
+                eq(42L),
+                eq(3L),
+                eq(4L),
+                any(),
+                any(),
+                any(Pageable.class)
+        );
+    }
+
+    @Test
+    void cashierPendingWithoutAuthorityDoesNotQueryRepository() {
+        doThrow(new PaymentDraftBusinessException(
+                "PAYMENT_REQUEST_LIST_SCOPE_FORBIDDEN",
+                "目前登入者沒有出納待辦查看權限"
+        )).when(readAuthorizationService).requireCashierAuthority(
+                PaymentRequestListScope.CASHIER_PENDING,
+                false
+        );
+
+        PaymentDraftBusinessException exception = assertThrows(
+                PaymentDraftBusinessException.class,
+                () -> service.list(
+                        new PaymentRequestListQuery(
+                                0, 20, null, null, null, null,
+                                null, null, null, null, null, null, null
+                        ),
+                        PaymentRequestListScope.CASHIER_PENDING,
+                        1L,
+                        false
+                )
+        );
+
+        assertEquals("PAYMENT_REQUEST_LIST_SCOPE_FORBIDDEN", exception.getCode());
+        verifySearchNeverCalled();
+    }
+
+    @Test
+    void paymentPendingForcesApprovedAndUnpaidWithPaymentOperatorAuthority() {
+        whenSearchReturns(Page.empty());
+        when(readAuthorizationService.resolveApprovalStatusForList(
+                PaymentRequestListScope.PAYMENT_PENDING,
+                null
+        )).thenReturn(ApprovalStatus.APPROVED);
+        when(readAuthorizationService.resolvePaymentStatusForList(
+                PaymentRequestListScope.PAYMENT_PENDING,
+                null
+        )).thenReturn(PaymentStatus.UNPAID);
+
+        service.list(
+                new PaymentRequestListQuery(
+                        1,
+                        10,
+                        "PAY-42",
+                        null,
+                        null,
+                        RequestCategory.EXPENSE,
+                        7L,
+                        2L,
+                        42L,
+                        3L,
+                        4L,
+                        LocalDate.of(2026, 7, 1),
+                        LocalDate.of(2026, 7, 31)
+                ),
+                PaymentRequestListScope.PAYMENT_PENDING,
+                42L,
+                false,
+                true
+        );
+
+        verify(readAuthorizationService).requirePaymentOperatorAuthority(
+                PaymentRequestListScope.PAYMENT_PENDING,
+                true
+        );
+        verify(paymentRequestRepository).search(
+                eq("PAY-42"),
+                eq(ApprovalStatus.APPROVED),
+                eq(PaymentStatus.UNPAID),
+                eq(RequestCategory.EXPENSE),
+                eq(7L),
+                eq(2L),
+                eq(42L),
+                eq(3L),
+                eq(4L),
+                any(),
+                any(),
+                any(Pageable.class)
+        );
+    }
+
+    @Test
+    void paymentPendingWithoutPaymentOperatorDoesNotQueryRepository() {
+        doThrow(new PaymentDraftBusinessException(
+                "PAYMENT_REQUEST_LIST_SCOPE_FORBIDDEN",
+                "目前登入者沒有付款待辦查看權限"
+        )).when(readAuthorizationService).requirePaymentOperatorAuthority(
+                PaymentRequestListScope.PAYMENT_PENDING,
+                false
+        );
+
+        PaymentDraftBusinessException exception = assertThrows(
+                PaymentDraftBusinessException.class,
+                () -> service.list(
+                        new PaymentRequestListQuery(
+                                0, 20, null, null, null, null,
+                                null, null, null, null, null, null, null
+                        ),
+                        PaymentRequestListScope.PAYMENT_PENDING,
+                        1L,
+                        false,
+                        false
+                )
+        );
+
+        assertEquals("PAYMENT_REQUEST_LIST_SCOPE_FORBIDDEN", exception.getCode());
+        verifySearchNeverCalled();
+    }
+
+    @Test
+    void missingScopeDoesNotQueryRepository() {
+        PaymentDraftBusinessException exception = assertThrows(
+                PaymentDraftBusinessException.class,
+                () -> service.list(
+                        new PaymentRequestListQuery(
+                                0, 20, null, null, null, null,
+                                null, null, null, null, null, null, null
+                        ),
+                        null,
+                        1L,
+                        false,
+                        false
+                )
+        );
+
+        assertEquals("PAYMENT_REQUEST_LIST_SCOPE_REQUIRED", exception.getCode());
+        verifySearchNeverCalled();
     }
 
     @Test
@@ -150,6 +594,7 @@ class ListPaymentRequestsServiceTest {
                 RequestCategory.EXPENSE,
                 1L,
                 2L,
+                5L,
                 3L,
                 4L,
                 null,
@@ -163,6 +608,7 @@ class ListPaymentRequestsServiceTest {
                 eq(RequestCategory.EXPENSE),
                 eq(1L),
                 eq(2L),
+                eq(5L),
                 eq(3L),
                 eq(4L),
                 eq(null),
@@ -183,7 +629,7 @@ class ListPaymentRequestsServiceTest {
         ArgumentCaptor<String> requestNoCaptor = ArgumentCaptor.forClass(String.class);
         verify(paymentRequestRepository).search(
                 requestNoCaptor.capture(),
-                any(), any(), any(), any(), any(), any(), any(), any(), any(),
+                any(), any(), any(), any(), any(), any(), any(), any(), any(), any(),
                 any(Pageable.class)
         );
         assertNull(requestNoCaptor.getValue());
@@ -200,7 +646,7 @@ class ListPaymentRequestsServiceTest {
 
         verify(paymentRequestRepository).search(
                 eq(null),
-                any(), any(), any(), any(), any(), any(), any(), any(), any(),
+                any(), any(), any(), any(), any(), any(), any(), any(), any(), any(),
                 any(Pageable.class)
         );
     }
@@ -227,7 +673,7 @@ class ListPaymentRequestsServiceTest {
         ArgumentCaptor<OffsetDateTime> fromCaptor = ArgumentCaptor.forClass(OffsetDateTime.class);
         ArgumentCaptor<OffsetDateTime> toCaptor = ArgumentCaptor.forClass(OffsetDateTime.class);
         verify(paymentRequestRepository).search(
-                any(), any(), any(), any(), any(), any(), any(), any(),
+                any(), any(), any(), any(), any(), any(), any(), any(), any(),
                 fromCaptor.capture(),
                 toCaptor.capture(),
                 any(Pageable.class)
@@ -262,7 +708,7 @@ class ListPaymentRequestsServiceTest {
         );
 
         verify(paymentRequestRepository).search(
-                any(), any(), any(), any(), any(), any(), any(), any(),
+                any(), any(), any(), any(), any(), any(), any(), any(), any(),
                 any(OffsetDateTime.class),
                 any(),
                 any(Pageable.class)
@@ -302,6 +748,47 @@ class ListPaymentRequestsServiceTest {
         assertCode("INVALID_FILTER_ID", () -> service.list(
                 0, 20, null, null, null, null,
                 invalidId, null, null, null, null, null
+        ));
+        verifySearchNeverCalled();
+    }
+
+    @Test
+    void passesNullSupervisorIdToRepository() {
+        whenSearchReturns(Page.empty());
+
+        service.list(
+                0, 20, null, null, null, null,
+                null, null, null, null, null, null, null
+        );
+
+        verify(paymentRequestRepository).search(
+                any(), any(), any(), any(), any(), any(),
+                eq(null), any(), any(), any(), any(), any(Pageable.class)
+        );
+    }
+
+    @Test
+    void passesSupervisorIdFilterToRepository() {
+        whenSearchReturns(Page.empty());
+
+        service.list(
+                0, 20, null, null, null, null,
+                null, null, 20L, null, null, null, null
+        );
+
+        verify(paymentRequestRepository).search(
+                eq(null), eq(null), eq(null), eq(null),
+                eq(null), eq(null), eq(20L), eq(null), eq(null), eq(null), eq(null),
+                any(Pageable.class)
+        );
+    }
+
+    @ParameterizedTest
+    @ValueSource(longs = {0L, -1L})
+    void rejectsInvalidSupervisorId(Long invalidSupervisorId) {
+        assertCode("INVALID_FILTER_ID", () -> service.list(
+                0, 20, null, null, null, null,
+                null, null, invalidSupervisorId, null, null, null, null
         ));
         verifySearchNeverCalled();
     }
@@ -405,7 +892,7 @@ class ListPaymentRequestsServiceTest {
 
     private void whenSearchReturns(Page<PaymentRequest> page) {
         when(paymentRequestRepository.search(
-                any(), any(), any(), any(), any(), any(), any(), any(), any(), any(),
+                any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(),
                 any(Pageable.class)
         )).thenReturn(page);
     }
@@ -413,7 +900,7 @@ class ListPaymentRequestsServiceTest {
     private Pageable capturePageable() {
         ArgumentCaptor<Pageable> captor = ArgumentCaptor.forClass(Pageable.class);
         verify(paymentRequestRepository).search(
-                any(), any(), any(), any(), any(), any(), any(), any(), any(), any(),
+                any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(),
                 captor.capture()
         );
         return captor.getValue();
@@ -421,7 +908,7 @@ class ListPaymentRequestsServiceTest {
 
     private void verifySearchNeverCalled() {
         verify(paymentRequestRepository, never()).search(
-                any(), any(), any(), any(), any(), any(), any(), any(), any(), any(),
+                any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(),
                 any(Pageable.class)
         );
     }

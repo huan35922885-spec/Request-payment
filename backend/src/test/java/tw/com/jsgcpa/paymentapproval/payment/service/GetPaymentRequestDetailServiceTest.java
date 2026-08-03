@@ -75,7 +75,8 @@ class GetPaymentRequestDetailServiceTest {
                 paymentRequestRepository,
                 paymentRequestItemRepository,
                 approvalHistoryRepository,
-                paymentRequestAttachmentRepository
+                paymentRequestAttachmentRepository,
+                new PaymentRequestReadAuthorizationService()
         );
     }
 
@@ -99,7 +100,9 @@ class GetPaymentRequestDetailServiceTest {
         );
         stub(request, items, histories, attachments);
 
-        PaymentRequestDetailResponse response = service.getDetail(REQUEST_ID);
+        PaymentRequestDetailResponse response = service.getDetail(
+                REQUEST_ID, 1L, false, false
+        );
 
         assertEquals(REQUEST_ID, response.id());
         assertEquals("PAY-20260731-000100", response.requestNo());
@@ -133,7 +136,9 @@ class GetPaymentRequestDetailServiceTest {
         request.setPaidBy(null);
         stub(request, List.of(), List.of(), List.of());
 
-        PaymentRequestDetailResponse response = service.getDetail(REQUEST_ID);
+        PaymentRequestDetailResponse response = service.getDetail(
+                REQUEST_ID, 1L, false, false
+        );
 
         assertNull(response.supervisor());
         assertNull(response.submittedAt());
@@ -154,7 +159,9 @@ class GetPaymentRequestDetailServiceTest {
         request.setClosedAt(NOW);
         stub(request, List.of(), List.of(history(1L, ApprovalAction.MANAGER_REJECT)), List.of());
 
-        PaymentRequestDetailResponse response = service.getDetail(REQUEST_ID);
+        PaymentRequestDetailResponse response = service.getDetail(
+                REQUEST_ID, 1L, false, false
+        );
 
         assertEquals(ApprovalStatus.REJECTED_CLOSED, response.approvalStatus());
         assertEquals(NOW, response.rejectedAt());
@@ -170,7 +177,9 @@ class GetPaymentRequestDetailServiceTest {
         );
         stub(request, List.of(manual), List.of(), List.of());
 
-        PaymentRequestDetailResponse.ItemDetail response = service.getDetail(REQUEST_ID)
+        PaymentRequestDetailResponse.ItemDetail response = service.getDetail(
+                        REQUEST_ID, 1L, false, false
+                )
                 .items().get(0);
 
         assertEquals(CalculationType.MANUAL, response.calculationType());
@@ -190,7 +199,9 @@ class GetPaymentRequestDetailServiceTest {
         item.setAmount(new BigDecimal("246.90"));
         stub(request, List.of(item), List.of(), List.of());
 
-        PaymentRequestDetailResponse.ItemDetail response = service.getDetail(REQUEST_ID)
+        PaymentRequestDetailResponse.ItemDetail response = service.getDetail(
+                        REQUEST_ID, 1L, false, false
+                )
                 .items().get(0);
 
         assertEquals(new BigDecimal("123.45"), response.unitPrice());
@@ -215,7 +226,9 @@ class GetPaymentRequestDetailServiceTest {
         );
         stub(request, items, histories, attachments);
 
-        PaymentRequestDetailResponse response = service.getDetail(REQUEST_ID);
+        PaymentRequestDetailResponse response = service.getDetail(
+                REQUEST_ID, 1L, false, false
+        );
 
         assertEquals(9L, response.items().get(0).id());
         assertEquals(9L, response.approvalHistories().get(0).id());
@@ -228,7 +241,103 @@ class GetPaymentRequestDetailServiceTest {
 
         PaymentDraftBusinessException exception = assertThrows(
                 PaymentDraftBusinessException.class,
-                () -> service.getDetail(999L)
+                () -> service.getDetail(999L, 1L, false, false)
+        );
+
+        assertEquals("PAYMENT_REQUEST_NOT_FOUND", exception.getCode());
+        verify(paymentRequestItemRepository, never())
+                .findByPaymentRequest_IdOrderBySortOrderAscIdAsc(any());
+        verify(approvalHistoryRepository, never())
+                .findByPaymentRequest_IdOrderByActedAtAscIdAsc(any());
+        verify(paymentRequestAttachmentRepository, never())
+                .findByPaymentRequest_IdOrderByCreatedAtAscIdAsc(any());
+    }
+
+    @Test
+    void returnsSameNotFoundForExistingButUnauthorizedRequest() {
+        PaymentRequest request = basicRequest(
+                ApprovalStatus.DRAFT,
+                PaymentStatus.UNPAID
+        );
+        when(paymentRequestRepository.findById(REQUEST_ID))
+                .thenReturn(Optional.of(request));
+
+        PaymentDraftBusinessException exception = assertThrows(
+                PaymentDraftBusinessException.class,
+                () -> service.getDetail(REQUEST_ID, 999L, false, false)
+        );
+
+        assertEquals("PAYMENT_REQUEST_NOT_FOUND", exception.getCode());
+        assertEquals("找不到請款單", exception.getMessage());
+        verify(paymentRequestItemRepository, never())
+                .findByPaymentRequest_IdOrderBySortOrderAscIdAsc(any());
+        verify(approvalHistoryRepository, never())
+                .findByPaymentRequest_IdOrderByActedAtAscIdAsc(any());
+        verify(paymentRequestAttachmentRepository, never())
+                .findByPaymentRequest_IdOrderByCreatedAtAscIdAsc(any());
+    }
+
+    @Test
+    void allowsSupervisorSnapshotForPendingManagerBeforeLoadingCollections() {
+        PaymentRequest request = basicRequest(
+                ApprovalStatus.PENDING_MANAGER,
+                PaymentStatus.UNPAID
+        );
+        request.setSupervisorSnapshot(user(2L, "supervisor", "Supervisor"));
+        stub(request, List.of(), List.of(), List.of());
+
+        PaymentRequestDetailResponse response = service.getDetail(
+                REQUEST_ID, 2L, false, false
+        );
+
+        assertEquals(ApprovalStatus.PENDING_MANAGER, response.approvalStatus());
+        verify(paymentRequestItemRepository)
+                .findByPaymentRequest_IdOrderBySortOrderAscIdAsc(REQUEST_ID);
+    }
+
+    @Test
+    void allowsCashierForPendingCashier() {
+        PaymentRequest request = basicRequest(
+                ApprovalStatus.PENDING_CASHIER,
+                PaymentStatus.UNPAID
+        );
+        stub(request, List.of(), List.of(), List.of());
+
+        PaymentRequestDetailResponse response = service.getDetail(
+                REQUEST_ID, 9L, true, false
+        );
+
+        assertEquals(ApprovalStatus.PENDING_CASHIER, response.approvalStatus());
+    }
+
+    @Test
+    void allowsPaymentOperatorForApprovedUnpaid() {
+        PaymentRequest request = basicRequest(
+                ApprovalStatus.APPROVED,
+                PaymentStatus.UNPAID
+        );
+        stub(request, List.of(), List.of(), List.of());
+
+        PaymentRequestDetailResponse response = service.getDetail(
+                REQUEST_ID, 9L, false, true
+        );
+
+        assertEquals(ApprovalStatus.APPROVED, response.approvalStatus());
+        assertEquals(PaymentStatus.UNPAID, response.paymentStatus());
+    }
+
+    @Test
+    void rejectsPaymentOperatorForApprovedPaid() {
+        PaymentRequest request = basicRequest(
+                ApprovalStatus.APPROVED,
+                PaymentStatus.PAID
+        );
+        when(paymentRequestRepository.findById(REQUEST_ID))
+                .thenReturn(Optional.of(request));
+
+        PaymentDraftBusinessException exception = assertThrows(
+                PaymentDraftBusinessException.class,
+                () -> service.getDetail(REQUEST_ID, 9L, false, true)
         );
 
         assertEquals("PAYMENT_REQUEST_NOT_FOUND", exception.getCode());
@@ -246,7 +355,7 @@ class GetPaymentRequestDetailServiceTest {
     void rejectsInvalidPaymentRequestIds(Long id) {
         PaymentDraftBusinessException exception = assertThrows(
                 PaymentDraftBusinessException.class,
-                () -> service.getDetail(id)
+                () -> service.getDetail(id, 1L, false, false)
         );
 
         assertEquals("INVALID_PAYMENT_REQUEST_ID", exception.getCode());
@@ -258,7 +367,7 @@ class GetPaymentRequestDetailServiceTest {
         PaymentRequest request = basicRequest(ApprovalStatus.DRAFT, PaymentStatus.UNPAID);
         stub(request, List.of(), List.of(), List.of());
 
-        service.getDetail(REQUEST_ID);
+        service.getDetail(REQUEST_ID, 1L, false, false);
 
         verify(paymentRequestRepository, never()).save(any());
         verify(paymentRequestRepository, never()).delete(any());
