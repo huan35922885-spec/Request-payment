@@ -12,8 +12,11 @@ import type {
   RecordPaymentResponse,
   SubmitPaymentDraftRequest,
   SubmitPaymentDraftResponse,
+  PaymentRequestAttachmentResponse,
+  PaymentRequestAttachmentType,
 } from '../types/payment'
 import type { ApprovalStatus, PaymentStatus } from '../types/workflow'
+import type { AxiosResponse } from 'axios'
 
 export async function createPaymentDraft(
   request: CreatePaymentDraftRequest,
@@ -31,6 +34,41 @@ export async function getPaymentRequestDetail(
 ): Promise<PaymentRequestDetail> {
   const response = await http.get<PaymentRequestDetail>(`/payment-requests/${id}`)
   return response.data
+}
+
+export async function uploadPaymentRequestAttachment(
+  paymentRequestId: number,
+  attachmentType: PaymentRequestAttachmentType,
+  file: File,
+): Promise<PaymentRequestAttachmentResponse> {
+  const formData = new FormData()
+  formData.append('attachmentType', attachmentType)
+  formData.append('file', file)
+
+  const response = await http.post<PaymentRequestAttachmentResponse>(
+    `/payment-requests/${paymentRequestId}/attachments`,
+    formData,
+  )
+  return response.data
+}
+
+export function downloadPaymentRequestAttachment(
+  paymentRequestId: number,
+  attachmentId: number,
+): Promise<AxiosResponse<Blob>> {
+  return http.get<Blob>(
+    `/payment-requests/${paymentRequestId}/attachments/${attachmentId}/download`,
+    { responseType: 'blob' },
+  )
+}
+
+export async function deletePaymentRequestAttachment(
+  paymentRequestId: number,
+  attachmentId: number,
+): Promise<void> {
+  await http.delete(
+    `/payment-requests/${paymentRequestId}/attachments/${attachmentId}`,
+  )
 }
 
 export async function submitPaymentDraft(
