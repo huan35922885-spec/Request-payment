@@ -35,12 +35,18 @@ class FileSystemAttachmentStorageServiceTest {
     @BeforeEach
     void setUp() throws IOException {
         temporaryDirectory = Files.createTempDirectory("attachment-storage-test-");
+        storageService = newStorageService(
+                temporaryDirectory.resolve("attachments")
+        );
+    }
+
+    private FileSystemAttachmentStorageService newStorageService(Path root) {
         AttachmentStorageProperties properties = new AttachmentStorageProperties();
-        properties.setStorageRoot(temporaryDirectory.resolve("attachments"));
+        properties.setStorageRoot(root);
         properties.setMaxFileSize(DataSize.ofMegabytes(10));
         properties.setAllowedContentTypes(Set.of("application/pdf"));
         properties.setAllowedExtensions(Set.of("pdf"));
-        storageService = new FileSystemAttachmentStorageService(
+        return new FileSystemAttachmentStorageService(
                 properties,
                 new AttachmentStorageKeyGenerator()
         );
@@ -122,7 +128,7 @@ class FileSystemAttachmentStorageServiceTest {
             Files.createDirectories(outside);
 
             try {
-                Files.createSymbolicLink(escapedParent, outside);
+                createSymbolicLinkOrSkip(escapedParent, outside);
             } catch (UnsupportedOperationException | SecurityException exception) {
                 Files.deleteIfExists(escapedParent);
                 assumeTrue(false, "symbolic links are not supported by this test environment");
@@ -142,15 +148,7 @@ class FileSystemAttachmentStorageServiceTest {
                 throw exception;
             }
 
-            AttachmentStorageProperties properties = new AttachmentStorageProperties();
-            properties.setStorageRoot(root);
-            properties.setMaxFileSize(DataSize.ofMegabytes(10));
-            properties.setAllowedContentTypes(Set.of("application/pdf"));
-            properties.setAllowedExtensions(Set.of("pdf"));
-            storageService = new FileSystemAttachmentStorageService(
-                    properties,
-                    new AttachmentStorageKeyGenerator()
-            );
+            storageService = newStorageService(root);
 
             byte[] content = new byte[]{0x25, 0x50, 0x44, 0x46};
             ValidatedAttachmentFile file = new ValidatedAttachmentFile(
@@ -170,6 +168,53 @@ class FileSystemAttachmentStorageServiceTest {
             try (var files = Files.list(outside)) {
                 assertTrue(files.findAny().isEmpty(),
                         "storage must not write outside the configured root");
+            }
+            assertNoTemporaryFilesRemain(testDirectory);
+        } finally {
+            deleteRecursively(testDirectory);
+        }
+    }
+
+    @Test
+    void restoreRejectsWhenOriginalParentSymlinkEscapesRoot() throws IOException {
+        Path testDirectory = Files.createTempDirectory("attachment-restore-symlink-test-");
+        try {
+            Path root = testDirectory.resolve("attachments");
+            Path outside = testDirectory.resolve("outside");
+            Files.createDirectories(outside);
+            storageService = newStorageService(root);
+
+            StoredAttachmentFile stored = storageService.store(
+                    14L,
+                    new ValidatedAttachmentFile(
+                            "invoice.pdf",
+                            "application/pdf",
+                            "pdf",
+                            4,
+                            new byte[]{0x25, 0x50, 0x44, 0x46}
+                    )
+            );
+            PreparedAttachmentDeletion prepared = storageService.prepareDelete(
+                    stored.relativeStoragePath()
+            );
+
+            Path originalParent = root.resolve("payment-requests").resolve("14");
+            Files.delete(originalParent);
+            createSymbolicLinkOrSkip(originalParent, outside);
+
+            AttachmentStorageException exception = assertThrows(
+                    AttachmentStorageException.class,
+                    () -> storageService.restore(prepared)
+            );
+
+            assertEquals("ATTACHMENT_STORAGE_DELETE_FAILED", exception.getCode());
+            assertTrue(Files.exists(
+                    root.resolve(prepared.preparedRelativePath()),
+                    java.nio.file.LinkOption.NOFOLLOW_LINKS
+            ));
+            try (var files = Files.list(outside)) {
+                assertTrue(files.findAny().isEmpty(),
+                        "restore must not write outside the configured root");
             }
             assertNoTemporaryFilesRemain(testDirectory);
         } finally {
@@ -303,6 +348,30 @@ class FileSystemAttachmentStorageServiceTest {
             for (Path path : pathsToDelete) {
                 Files.deleteIfExists(path);
             }
+        }
+    }
+
+    private void createSymbolicLinkOrSkip(Path link, Path target)
+            throws IOException {
+        try {
+            Files.createSymbolicLink(link, target);
+        } catch (UnsupportedOperationException | SecurityException exception) {
+            Files.deleteIfExists(link);
+            assumeTrue(false, "symbolic links are not supported by this test environment");
+        } catch (AccessDeniedException exception) {
+            Files.deleteIfExists(link);
+            assumeTrue(false, "symbolic link creation is not permitted by this test environment");
+        } catch (FileSystemException exception) {
+            String message = exception.toString().toLowerCase(Locale.ROOT);
+            boolean permissionDenied = message.contains("permission")
+                    || message.contains("access denied")
+                    || message.contains("special privilege")
+                    || message.contains("特殊權限");
+            if (permissionDenied) {
+                Files.deleteIfExists(link);
+                assumeTrue(false, "symbolic link creation is not permitted by this test environment");
+            }
+            throw exception;
         }
     }
 }

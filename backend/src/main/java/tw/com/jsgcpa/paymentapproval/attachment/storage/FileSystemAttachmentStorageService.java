@@ -52,10 +52,11 @@ public class FileSystemAttachmentStorageService
 
         try {
             Path realRoot = ensureStorageRootForStore(root);
-            Path realParent = prepareStoreParentDirectory(
+            Path realParent = prepareSafeParentDirectory(
                     root,
                     target,
-                    realRoot
+                    realRoot,
+                    "ATTACHMENT_STORAGE_PATH_INVALID"
             );
             Path realTarget = realParent.resolve(
                     target.getFileName()
@@ -246,18 +247,17 @@ public class FileSystemAttachmentStorageService
         }
 
         try {
-            if (Files.exists(original, LinkOption.NOFOLLOW_LINKS)) {
-                throw storageError(
-                        "ATTACHMENT_STORAGE_DELETE_FAILED",
-                        "Original attachment path already exists"
-                );
-            }
+            Path realRoot = root.toRealPath();
+            rejectSymbolicLink(
+                    original,
+                    "ATTACHMENT_STORAGE_DELETE_FAILED",
+                    "Original attachment path must not be a symbolic link"
+            );
             rejectSymbolicLink(
                     prepared,
                     "ATTACHMENT_STORAGE_DELETE_FAILED",
                     "Prepared attachment must not be a symbolic link"
             );
-            Path realRoot = root.toRealPath();
             Path realPrepared = prepared.toRealPath();
             if (!realPrepared.startsWith(realRoot)
                     || !Files.isRegularFile(
@@ -269,8 +269,25 @@ public class FileSystemAttachmentStorageService
                         "Prepared attachment is not a regular file"
                 );
             }
-            Files.createDirectories(original.getParent());
-            moveAtomically(prepared, original);
+            Path realParent = prepareSafeParentDirectory(
+                    root,
+                    original,
+                    realRoot,
+                    "ATTACHMENT_STORAGE_DELETE_FAILED"
+            );
+            Path realOriginal = realParent.resolve(
+                    original.getFileName()
+            ).normalize();
+            if (Files.exists(original, LinkOption.NOFOLLOW_LINKS)
+                    || !realOriginal.startsWith(realParent)
+                    || Files.isSymbolicLink(realOriginal)
+                    || Files.exists(realOriginal, LinkOption.NOFOLLOW_LINKS)) {
+                throw storageError(
+                        "ATTACHMENT_STORAGE_DELETE_FAILED",
+                        "Original attachment target already exists or is invalid"
+                );
+            }
+            moveAtomically(realPrepared, realOriginal);
         } catch (AttachmentStorageException exception) {
             throw exception;
         } catch (IOException exception) {
@@ -415,10 +432,11 @@ public class FileSystemAttachmentStorageService
         return root.toRealPath();
     }
 
-    private Path prepareStoreParentDirectory(
+    private Path prepareSafeParentDirectory(
             Path root,
             Path target,
-            Path realRoot
+            Path realRoot,
+            String errorCode
     ) throws IOException {
         Path lexicalParent = target.getParent();
         Path relativeParent = root.relativize(lexicalParent);
@@ -429,13 +447,13 @@ public class FileSystemAttachmentStorageService
             Path next = current.resolve(relativeParent.getName(index)).normalize();
             if (!next.startsWith(root)) {
                 throw storageError(
-                        "ATTACHMENT_STORAGE_PATH_INVALID",
+                        errorCode,
                         "Attachment storage parent escapes the storage root"
                 );
             }
             if (Files.isSymbolicLink(next)) {
                 throw storageError(
-                        "ATTACHMENT_STORAGE_PATH_INVALID",
+                        errorCode,
                         "Attachment storage parent must not be a symbolic link"
                 );
             }
@@ -445,7 +463,7 @@ public class FileSystemAttachmentStorageService
             if (Files.isSymbolicLink(next)
                     || !Files.isDirectory(next, LinkOption.NOFOLLOW_LINKS)) {
                 throw storageError(
-                        "ATTACHMENT_STORAGE_PATH_INVALID",
+                        errorCode,
                         "Attachment storage parent must be a directory"
                 );
             }
@@ -454,7 +472,7 @@ public class FileSystemAttachmentStorageService
             if (!realNext.startsWith(realRoot)
                     || !Files.isDirectory(realNext, LinkOption.NOFOLLOW_LINKS)) {
                 throw storageError(
-                        "ATTACHMENT_STORAGE_PATH_INVALID",
+                        errorCode,
                         "Attachment storage parent escapes the storage root"
                 );
             }
