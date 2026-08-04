@@ -347,7 +347,7 @@ class GetPaymentRequestDetailServiceTest {
     }
 
     @Test
-    void rejectsPaymentOperatorForApprovedPaid() {
+    void allowsPaymentOperatorForApprovedPaid() {
         PaymentRequest request = basicRequest(
                 ApprovalStatus.APPROVED,
                 PaymentStatus.PAID
@@ -355,18 +355,12 @@ class GetPaymentRequestDetailServiceTest {
         when(paymentRequestRepository.findById(REQUEST_ID))
                 .thenReturn(Optional.of(request));
 
-        PaymentDraftBusinessException exception = assertThrows(
-                PaymentDraftBusinessException.class,
-                () -> service.getDetail(REQUEST_ID, 9L, false, true)
+        PaymentRequestDetailResponse response = service.getDetail(
+                REQUEST_ID, 9L, false, true
         );
 
-        assertEquals("PAYMENT_REQUEST_NOT_FOUND", exception.getCode());
-        verify(paymentRequestItemRepository, never())
-                .findByPaymentRequest_IdOrderBySortOrderAscIdAsc(any());
-        verify(approvalHistoryRepository, never())
-                .findByPaymentRequest_IdOrderByActedAtAscIdAsc(any());
-        verify(paymentRequestAttachmentRepository, never())
-                .findByPaymentRequest_IdOrderByCreatedAtAscIdAsc(any());
+        assertEquals(ApprovalStatus.APPROVED, response.approvalStatus());
+        assertEquals(PaymentStatus.PAID, response.paymentStatus());
     }
 
     @ParameterizedTest

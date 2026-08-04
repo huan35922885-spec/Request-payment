@@ -186,8 +186,8 @@ class PaymentRequestReadAuthorizationServiceTest {
     }
 
     @Test
-    void paymentOperatorCannotReadApprovedPaid() {
-        assertFalse(service.canReadDetail(
+    void paymentOperatorCanReadApprovedPaid() {
+        assertTrue(service.canReadDetail(
                 request(
                         APPLICANT_ID,
                         SUPERVISOR_ID,
@@ -243,7 +243,7 @@ class PaymentRequestReadAuthorizationServiceTest {
                 true,
                 true
         ));
-        assertFalse(service.canReadDetail(
+        assertTrue(service.canReadDetail(
                 request(
                         APPLICANT_ID,
                         SUPERVISOR_ID,

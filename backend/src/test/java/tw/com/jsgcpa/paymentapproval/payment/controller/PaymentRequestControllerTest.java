@@ -27,6 +27,8 @@ import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.mock.web.MockMultipartFile;
+import org.springframework.web.multipart.MultipartFile;
 import org.springframework.web.bind.support.WebDataBinderFactory;
 import org.springframework.web.context.request.NativeWebRequest;
 import org.springframework.web.method.support.HandlerMethodArgumentResolver;
@@ -781,6 +783,87 @@ class PaymentRequestControllerTest {
                 1L,
                 recordRequest(3L, PAYMENT_PAID_AT, PaymentMethod.BANK_TRANSFER,
                         "E2E-TRANSFER-001", "已完成銀行轉帳")
+        );
+    }
+
+    @Test
+    void recordsPaymentUsingMultipartRequestAndProof() throws Exception {
+        RecordPaymentRequest request = recordRequest(
+                3L, PAYMENT_PAID_AT, PaymentMethod.BANK_TRANSFER,
+                "E2E-TRANSFER-001", "payment proof"
+        );
+        MockMultipartFile requestPart = new MockMultipartFile(
+                "request", "request.json", MediaType.APPLICATION_JSON_VALUE,
+                ("{\"version\":3,\"paidAt\":\"2026-07-31T05:30:00Z\","
+                        + "\"paymentMethod\":\"BANK_TRANSFER\","
+                        + "\"paymentReference\":\"E2E-TRANSFER-001\","
+                        + "\"paymentNote\":\"payment proof\"}").getBytes()
+        );
+        MockMultipartFile proof = new MockMultipartFile(
+                "file", "payment-proof.pdf", MediaType.APPLICATION_PDF_VALUE,
+                "%PDF-1.7".getBytes()
+        );
+        when(recordPaymentService.recordPayment(
+                eq(5L), eq(request), any(MultipartFile.class), eq(1L)
+        )).thenReturn(recordPaymentResponse());
+
+        mockMvc.perform(MockMvcRequestBuilders.multipart(
+                        "/api/payment-requests/5/record-payment"
+                )
+                .file(requestPart)
+                .file(proof))
+                .andExpect(MockMvcResultMatchers.status().isOk())
+                .andExpect(MockMvcResultMatchers.jsonPath("$.paymentStatus")
+                        .value("PAID"));
+
+        verify(recordPaymentService).recordPayment(
+                eq(5L), eq(request), any(MultipartFile.class), eq(1L)
+        );
+    }
+
+    @Test
+    void delegatesMissingProofToServiceForExplicitBusinessError() throws Exception {
+        RecordPaymentRequest request = recordRequest(
+                3L, PAYMENT_PAID_AT, PaymentMethod.BANK_TRANSFER,
+                "E2E-TRANSFER-001", "payment proof"
+        );
+        MockMultipartFile requestPart = new MockMultipartFile(
+                "request", "request.json", MediaType.APPLICATION_JSON_VALUE,
+                ("{\"version\":3,\"paidAt\":\"2026-07-31T05:30:00Z\","
+                        + "\"paymentMethod\":\"BANK_TRANSFER\","
+                        + "\"paymentReference\":\"E2E-TRANSFER-001\","
+                        + "\"paymentNote\":\"payment proof\"}").getBytes()
+        );
+        when(recordPaymentService.recordPayment(
+                eq(5L), eq(request), org.mockito.ArgumentMatchers.isNull(MultipartFile.class), eq(1L)
+        )).thenThrow(new PaymentDraftBusinessException(
+                "PAYMENT_PROOF_REQUIRED", "Payment proof file is required"
+        ));
+
+        mockMvc.perform(MockMvcRequestBuilders.multipart(
+                        "/api/payment-requests/5/record-payment"
+                ).file(requestPart))
+                .andExpect(MockMvcResultMatchers.status().isBadRequest())
+                .andExpect(MockMvcResultMatchers.jsonPath("$.code")
+                        .value("PAYMENT_PROOF_REQUIRED"));
+    }
+
+    @Test
+    void rejectsMultipartRequestWithoutRequestPart() throws Exception {
+        MockMultipartFile proof = new MockMultipartFile(
+                "file", "payment-proof.pdf", MediaType.APPLICATION_PDF_VALUE,
+                "%PDF-1.7".getBytes()
+        );
+
+        mockMvc.perform(MockMvcRequestBuilders.multipart(
+                        "/api/payment-requests/5/record-payment"
+                ).file(proof))
+                .andExpect(MockMvcResultMatchers.status().isBadRequest())
+                .andExpect(MockMvcResultMatchers.jsonPath("$.code")
+                        .value("INVALID_REQUEST_BODY"));
+        verify(recordPaymentService, never()).recordPayment(
+                any(Long.class), any(RecordPaymentRequest.class),
+                any(MultipartFile.class), any(Long.class)
         );
     }
 
