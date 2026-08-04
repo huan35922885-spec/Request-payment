@@ -4,6 +4,8 @@ target/
 !**/src/main/**/target/
 !**/src/test/**/target/
 src/main/resources/application-local.yml
+src/main/resources/application-local.yaml
+data/attachments/
 ### STS ###
 .apt_generated
 .classpath

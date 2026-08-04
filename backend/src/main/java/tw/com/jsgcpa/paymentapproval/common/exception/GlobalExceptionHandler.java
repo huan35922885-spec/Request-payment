@@ -14,8 +14,14 @@ import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
+import org.springframework.web.multipart.MaxUploadSizeExceededException;
 import tw.com.jsgcpa.paymentapproval.common.api.ApiErrorResponse;
 import tw.com.jsgcpa.paymentapproval.common.api.FieldValidationError;
+import tw.com.jsgcpa.paymentapproval.attachment.exception.AttachmentStorageException;
+import tw.com.jsgcpa.paymentapproval.attachment.exception.AttachmentValidationException;
+import tw.com.jsgcpa.paymentapproval.attachment.exception.PaymentRequestAttachmentBusinessException;
+import tw.com.jsgcpa.paymentapproval.attachment.exception.PaymentRequestAttachmentNotFoundException;
+import tw.com.jsgcpa.paymentapproval.attachment.exception.PaymentRequestAttachmentDeleteException;
 import tw.com.jsgcpa.paymentapproval.payment.exception.PaymentDraftBusinessException;
 import tw.com.jsgcpa.paymentapproval.security.exception.AuthenticationBusinessException;
 
@@ -71,8 +77,116 @@ public class GlobalExceptionHandler {
     ) {
         return errorResponse(
                 HttpStatus.BAD_REQUEST,
-                "INVALID_QUERY_PARAMETER",
+                "attachmentType".equals(exception.getName())
+                        ? "PAYMENT_REQUEST_ATTACHMENT_TYPE_INVALID"
+                        : "INVALID_QUERY_PARAMETER",
                 "Query parameter is invalid",
+                request,
+                List.of()
+        );
+    }
+
+    @ExceptionHandler(PaymentRequestAttachmentBusinessException.class)
+    public ResponseEntity<ApiErrorResponse> handleAttachmentBusinessException(
+            PaymentRequestAttachmentBusinessException exception,
+            HttpServletRequest request
+    ) {
+        HttpStatus status = switch (exception.getCode()) {
+            case "PAYMENT_REQUEST_ATTACHMENT_UPLOAD_FORBIDDEN" ->
+                    HttpStatus.FORBIDDEN;
+            case "PAYMENT_REQUEST_ATTACHMENT_UPLOAD_STATUS_INVALID" ->
+                    HttpStatus.CONFLICT;
+            default -> HttpStatus.BAD_REQUEST;
+        };
+        return errorResponse(
+                status,
+                exception.getCode(),
+                exception.getMessage(),
+                request,
+                List.of()
+        );
+    }
+
+    @ExceptionHandler(PaymentRequestAttachmentDeleteException.class)
+    public ResponseEntity<ApiErrorResponse> handleAttachmentDeleteException(
+            PaymentRequestAttachmentDeleteException exception,
+            HttpServletRequest request
+    ) {
+        HttpStatus status = switch (exception.getCode()) {
+            case "PAYMENT_REQUEST_ATTACHMENT_DELETE_FORBIDDEN" ->
+                    HttpStatus.FORBIDDEN;
+            case "PAYMENT_REQUEST_ATTACHMENT_DELETE_STATUS_INVALID" ->
+                    HttpStatus.CONFLICT;
+            default -> HttpStatus.BAD_REQUEST;
+        };
+        return errorResponse(
+                status,
+                exception.getCode(),
+                exception.getMessage(),
+                request,
+                List.of()
+        );
+    }
+
+    @ExceptionHandler(AttachmentValidationException.class)
+    public ResponseEntity<ApiErrorResponse> handleAttachmentValidationException(
+            AttachmentValidationException exception,
+            HttpServletRequest request
+    ) {
+        HttpStatus status = "ATTACHMENT_FILE_TOO_LARGE".equals(
+                exception.getCode()
+        ) ? HttpStatus.PAYLOAD_TOO_LARGE : HttpStatus.BAD_REQUEST;
+        return errorResponse(
+                status,
+                exception.getCode(),
+                exception.getMessage(),
+                request,
+                List.of()
+        );
+    }
+
+    @ExceptionHandler(AttachmentStorageException.class)
+    public ResponseEntity<ApiErrorResponse> handleAttachmentStorageException(
+            AttachmentStorageException exception,
+            HttpServletRequest request
+    ) {
+        String message = "ATTACHMENT_STORAGE_DELETE_FAILED".equals(
+                exception.getCode()
+        ) ? "附件檔案暫時無法刪除" : "ATTACHMENT_STORAGE_READ_FAILED".equals(
+                exception.getCode()
+        ) ? "附件檔案暫時無法讀取" : "Attachment storage operation failed";
+        return errorResponse(
+                HttpStatus.INTERNAL_SERVER_ERROR,
+                exception.getCode(),
+                message,
+                request,
+                List.of()
+        );
+    }
+
+    @ExceptionHandler(PaymentRequestAttachmentNotFoundException.class)
+    public ResponseEntity<ApiErrorResponse> handleAttachmentNotFound(
+            PaymentRequestAttachmentNotFoundException exception,
+            HttpServletRequest request
+    ) {
+        return errorResponse(
+                HttpStatus.NOT_FOUND,
+                "PAYMENT_REQUEST_ATTACHMENT_NOT_FOUND",
+                "找不到附件",
+                request,
+                List.of()
+        );
+    }
+
+    @ExceptionHandler(MaxUploadSizeExceededException.class)
+    public ResponseEntity<ApiErrorResponse> handleMaxUploadSizeExceeded(
+            MaxUploadSizeExceededException exception,
+            HttpServletRequest request
+    ) {
+        return errorResponse(
+                HttpStatus.PAYLOAD_TOO_LARGE,
+                "ATTACHMENT_FILE_TOO_LARGE",
+                "Attachment file exceeds the configured size limit",
                 request,
                 List.of()
         );

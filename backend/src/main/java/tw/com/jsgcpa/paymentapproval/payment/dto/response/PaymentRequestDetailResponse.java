@@ -111,6 +111,8 @@ public record PaymentRequestDetailResponse(
             String originalFilename,
             String contentType,
             Long fileSize,
+            Long uploadedById,
+            String uploadedByDisplayName,
             OffsetDateTime createdAt
     ) {
     }

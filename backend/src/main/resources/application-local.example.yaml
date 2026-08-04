@@ -1,0 +1,10 @@
+spring:
+  datasource:
+    url: jdbc:postgresql://localhost:5432/payment_approval
+    username: payment_user
+    password: ${PAYMENT_DB_PASSWORD}
+
+payment-approval:
+  attachment:
+    storage-root: ${PAYMENT_ATTACHMENT_STORAGE_ROOT:./data/attachments}
+    max-file-size: ${PAYMENT_ATTACHMENT_MAX_FILE_SIZE:10MB}
