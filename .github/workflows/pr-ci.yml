@@ -56,6 +56,12 @@ jobs:
         working-directory: backend
         run: chmod +x mvnw
 
+      - name: Initialize CI schema with Flyway
+        working-directory: backend
+        env:
+          PAYMENT_ATTACHMENT_STORAGE_ROOT: ${{ runner.temp }}/payment-approval-attachments
+        run: ./mvnw -B -Dtest=PaymentApprovalBackendApplicationTests test
+
       - name: Prepare synthetic CI master-data fixture
         shell: bash
         run: |
