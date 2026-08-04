@@ -12,8 +12,6 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.dao.OptimisticLockingFailureException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
-import org.springframework.transaction.support.TransactionSynchronization;
-import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.web.multipart.MultipartFile;
 
 import tw.com.jsgcpa.paymentapproval.approval.entity.ApprovalHistory;
@@ -51,6 +49,7 @@ public class RecordPaymentService {
     private final PaymentRequestAttachmentRepository attachmentRepository;
     private final AttachmentFileValidator attachmentFileValidator;
     private final AttachmentStorageService attachmentStorageService;
+    private final TransactionRollbackCleanupRegistrar cleanupRegistrar;
     private final Clock clock;
 
     @Autowired
@@ -60,7 +59,8 @@ public class RecordPaymentService {
             ApprovalHistoryRepository approvalHistoryRepository,
             PaymentRequestAttachmentRepository attachmentRepository,
             AttachmentFileValidator attachmentFileValidator,
-            AttachmentStorageService attachmentStorageService
+            AttachmentStorageService attachmentStorageService,
+            TransactionRollbackCleanupRegistrar cleanupRegistrar
     ) {
         this(
                 paymentRequestRepository,
@@ -69,6 +69,7 @@ public class RecordPaymentService {
                 attachmentRepository,
                 attachmentFileValidator,
                 attachmentStorageService,
+                cleanupRegistrar,
                 Clock.system(BUSINESS_ZONE)
         );
     }
@@ -80,6 +81,7 @@ public class RecordPaymentService {
             PaymentRequestAttachmentRepository attachmentRepository,
             AttachmentFileValidator attachmentFileValidator,
             AttachmentStorageService attachmentStorageService,
+            TransactionRollbackCleanupRegistrar cleanupRegistrar,
             Clock clock
     ) {
         this.paymentRequestRepository = paymentRequestRepository;
@@ -88,6 +90,7 @@ public class RecordPaymentService {
         this.attachmentRepository = attachmentRepository;
         this.attachmentFileValidator = attachmentFileValidator;
         this.attachmentStorageService = attachmentStorageService;
+        this.cleanupRegistrar = cleanupRegistrar;
         this.clock = clock;
     }
 
@@ -168,9 +171,9 @@ public class RecordPaymentService {
                 cleaned,
                 operationFailure.get()
         );
-        registerRollbackCleanup(rollbackCleanup);
-
         try {
+            cleanupRegistrar.register(rollbackCleanup);
+
             PaymentRequestAttachment attachment = new PaymentRequestAttachment();
             attachment.setPaymentRequest(paymentRequest);
             attachment.setUploadedBy(paidBy);
@@ -262,24 +265,6 @@ public class RecordPaymentService {
         throw businessError(
                 "PAYMENT_PROOF_REQUIRED",
                 "Payment proof file is required"
-        );
-    }
-
-    private void registerRollbackCleanup(
-            Runnable cleanup
-    ) {
-        if (!TransactionSynchronizationManager.isSynchronizationActive()) {
-            return;
-        }
-        TransactionSynchronizationManager.registerSynchronization(
-                new TransactionSynchronization() {
-                    @Override
-                    public void afterCompletion(int status) {
-                        if (status != STATUS_COMMITTED) {
-                            cleanup.run();
-                        }
-                    }
-                }
         );
     }
 
