@@ -3,6 +3,7 @@ import { computed, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import PaymentRequestStatusTag from '../../components/payment/PaymentRequestStatusTag.vue'
+import PaymentRequestAttachmentPanel from '../../components/attachment/PaymentRequestAttachmentPanel.vue'
 import {
   approvePaymentRequestByCashier,
   approvePaymentRequestByManager,
@@ -83,6 +84,11 @@ const isDraft = computed(() => detail.value?.approvalStatus === 'DRAFT')
 
 const isSubmitOwner = computed(() =>
   detail.value?.applicant?.id === authStore.user?.userId,
+)
+
+const canManageAttachments = computed(() =>
+  detail.value?.approvalStatus === 'DRAFT'
+  && detail.value.applicant.id === authStore.user?.userId,
 )
 
 const canSubmit = computed(() =>
@@ -799,6 +805,13 @@ watch(requestId, () => {
           </el-table-column>
         </el-table>
       </el-card>
+
+      <PaymentRequestAttachmentPanel
+        :payment-request-id="detail.id"
+        :attachments="detail.attachments"
+        :can-manage-attachments="canManageAttachments"
+        @changed="loadDetail"
+      />
 
       <el-card shadow="never" class="detail-card">
         <template #header>

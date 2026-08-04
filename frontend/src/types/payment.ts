@@ -115,14 +115,27 @@ export interface PaymentRequestApprovalHistoryDetail {
   actedAt: string
 }
 
-export interface PaymentRequestAttachmentDetail {
+export type PaymentRequestAttachmentType =
+  | 'INVOICE'
+  | 'RECEIPT'
+  | 'REQUEST_PROOF'
+  | 'PAYMENT_PROOF'
+  | 'OTHER'
+
+export interface PaymentRequestAttachment {
   id: number
-  attachmentType: string
+  attachmentType: PaymentRequestAttachmentType
   originalFilename: string
   contentType: string
   fileSize: number
+  uploadedById: number
+  uploadedByDisplayName: string
   createdAt: string
 }
+
+export type PaymentRequestAttachmentResponse = PaymentRequestAttachment
+
+export type PaymentRequestAttachmentDetail = PaymentRequestAttachment
 
 export interface PaymentRequestDetail {
   id: number
@@ -149,7 +162,7 @@ export interface PaymentRequestDetail {
   paymentNote: string | null
   items: PaymentRequestItemDetail[]
   approvalHistories: PaymentRequestApprovalHistoryDetail[]
-  attachments: PaymentRequestAttachmentDetail[]
+  attachments: PaymentRequestAttachment[]
   createdAt: string
   updatedAt: string
   version: number

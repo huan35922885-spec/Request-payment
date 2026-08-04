@@ -1,0 +1,3 @@
+-- Replace through a local, non-tracked seed process.
+-- Do not commit real password hashes or reusable credentials.
+-- This example intentionally contains no executable account or credential data.

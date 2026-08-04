@@ -641,6 +641,12 @@ class PaymentRequestControllerTest {
                         .value("PAYMENT_RECORDED"))
                 .andExpect(MockMvcResultMatchers.jsonPath("$.attachments[0].originalFilename")
                         .value("receipt.pdf"))
+                .andExpect(MockMvcResultMatchers.jsonPath("$.attachments[0].uploadedById")
+                        .value(6))
+                .andExpect(MockMvcResultMatchers.jsonPath("$.attachments[0].uploadedByDisplayName")
+                        .value("附件上傳人"))
+                .andExpect(MockMvcResultMatchers.jsonPath("$.attachments[0].storedFilename")
+                        .doesNotExist())
                 .andExpect(MockMvcResultMatchers.jsonPath("$.attachments[0].storagePath")
                         .doesNotExist())
                 .andExpect(MockMvcResultMatchers.jsonPath("$.paymentMethod")
@@ -2505,6 +2511,8 @@ class PaymentRequestControllerTest {
                         "receipt.pdf",
                         "application/pdf",
                         1024L,
+                        6L,
+                        "附件上傳人",
                         OffsetDateTime.parse("2026-07-31T10:05:00+08:00")
                 )),
                 OffsetDateTime.parse("2026-07-31T09:00:00+08:00"),

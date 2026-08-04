@@ -1,0 +1,6 @@
+# Local development credentials and database seed files
+/backend/src/main/resources/application-local.yaml
+/backend/scripts/dev/seed_security_auth_e2e.sql
+
+# Office temporary lock files
+~$*.xlsx

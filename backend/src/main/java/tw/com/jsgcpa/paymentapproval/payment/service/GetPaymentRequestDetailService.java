@@ -195,15 +195,29 @@ public class GetPaymentRequestDetailService {
             return List.of();
         }
         return attachments.stream()
-                .map(attachment -> new AttachmentDetail(
-                        attachment.getId(),
-                        attachment.getAttachmentType(),
-                        attachment.getOriginalFilename(),
-                        attachment.getContentType(),
-                        attachment.getFileSize(),
-                        attachment.getCreatedAt()
-                ))
+                .map(this::toAttachmentDetail)
                 .toList();
+    }
+
+    private AttachmentDetail toAttachmentDetail(
+            PaymentRequestAttachment attachment
+    ) {
+        AppUser uploadedBy = attachment.getUploadedBy();
+        if (uploadedBy == null) {
+            throw new IllegalStateException(
+                    "Payment request attachment is missing uploadedBy"
+            );
+        }
+        return new AttachmentDetail(
+                attachment.getId(),
+                attachment.getAttachmentType(),
+                attachment.getOriginalFilename(),
+                attachment.getContentType(),
+                attachment.getFileSize(),
+                uploadedBy.getId(),
+                uploadedBy.getDisplayName(),
+                attachment.getCreatedAt()
+        );
     }
 
     private UserSummary toUserSummary(AppUser user) {

@@ -1,0 +1,124 @@
+name: Pull Request CI
+
+"on":
+  pull_request:
+    branches:
+      - master
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pr-ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  backend:
+    name: Backend tests on Ubuntu
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_DB: payment_approval
+          POSTGRES_USER: payment_user
+          # Synthetic credential for this disposable CI container only.
+          POSTGRES_PASSWORD: ci-ephemeral-not-for-real-accounts
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U payment_user -d payment_approval"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      SPRING_PROFILES_ACTIVE: local
+      SPRING_DATASOURCE_URL: jdbc:postgresql://localhost:5432/payment_approval
+      SPRING_DATASOURCE_USERNAME: payment_user
+      SPRING_DATASOURCE_PASSWORD: ci-ephemeral-not-for-real-accounts
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Java 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: maven
+          cache-dependency-path: backend/pom.xml
+
+      - name: Make Maven Wrapper executable
+        working-directory: backend
+        run: chmod +x mvnw
+
+      - name: Initialize CI schema with Flyway
+        working-directory: backend
+        env:
+          PAYMENT_ATTACHMENT_STORAGE_ROOT: ${{ runner.temp }}/payment-approval-attachments
+        run: ./mvnw -B -Dtest=PaymentApprovalBackendApplicationTests test
+
+      - name: Prepare synthetic CI master-data fixture
+        shell: bash
+        run: |
+          postgres_container="$(docker ps --filter 'ancestor=postgres:18' --format '{{.ID}}' | head -n 1)"
+          test -n "$postgres_container"
+          docker exec "$postgres_container" psql \
+            -U payment_user \
+            -d payment_approval \
+            -v ON_ERROR_STOP=1 \
+            -c "INSERT INTO expense_types (id, code, name, calculation_type, active)
+                VALUES (1, 'CI_FIXTURE', 'CI fixture expense', 'MANUAL', TRUE)
+                ON CONFLICT (id) DO UPDATE
+                SET code = EXCLUDED.code,
+                    name = EXCLUDED.name,
+                    calculation_type = EXCLUDED.calculation_type,
+                    active = EXCLUDED.active;"
+
+      - name: Run backend tests
+        working-directory: backend
+        env:
+          PAYMENT_ATTACHMENT_STORAGE_ROOT: ${{ runner.temp }}/payment-approval-attachments
+        run: ./mvnw -B clean test
+
+      - name: Require zero skipped backend tests
+        working-directory: backend
+        shell: bash
+        run: |
+          if grep -R -E "Skipped: [1-9][0-9]*" target/surefire-reports/*.txt; then
+            echo "::error::One or more backend tests were skipped."
+            exit 1
+          fi
+
+      - name: Compile backend
+        working-directory: backend
+        env:
+          PAYMENT_ATTACHMENT_STORAGE_ROOT: ${{ runner.temp }}/payment-approval-attachments
+        run: ./mvnw -B clean compile
+
+  frontend:
+    name: Frontend build
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: npm ci
+
+      - name: Build frontend
+        working-directory: frontend
+        run: npm run build

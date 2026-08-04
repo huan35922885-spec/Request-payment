@@ -108,9 +108,24 @@ public class SecurityConfig {
                         ).authenticated()
                         .requestMatchers(
                                 HttpMethod.GET,
+                                "/api/payment-requests/*/attachments/*/download"
+                        )
+                        .authenticated()
+                        .requestMatchers(
+                                HttpMethod.GET,
                                 "/api/payment-requests/*"
                         ).authenticated()
                         .requestMatchers("/api/payment-requests/drafts")
+                        .authenticated()
+                        .requestMatchers(
+                                HttpMethod.POST,
+                                "/api/payment-requests/*/attachments"
+                        )
+                        .authenticated()
+                        .requestMatchers(
+                                HttpMethod.DELETE,
+                                "/api/payment-requests/*/attachments/*"
+                        )
                         .authenticated()
                         .requestMatchers(
                                 HttpMethod.POST,

@@ -122,6 +122,8 @@ class GetPaymentRequestDetailServiceTest {
                 response.approvalHistories().get(3).action());
         assertEquals(2, response.attachments().size());
         assertEquals("receipt.pdf", response.attachments().get(0).originalFilename());
+        assertEquals(4L, response.attachments().get(0).uploadedById());
+        assertEquals("附件上傳人", response.attachments().get(0).uploadedByDisplayName());
         assertEquals(4L, response.version());
     }
 
@@ -147,6 +149,24 @@ class GetPaymentRequestDetailServiceTest {
         assertEquals(List.of(), response.items());
         assertEquals(List.of(), response.approvalHistories());
         assertEquals(List.of(), response.attachments());
+    }
+
+    @Test
+    void rejectsAttachmentWithoutUploadedByInsteadOfUsingApplicant() {
+        PaymentRequest request = basicRequest(ApprovalStatus.DRAFT, PaymentStatus.UNPAID);
+        PaymentRequestAttachment attachment = attachment(2L, "receipt.pdf");
+        attachment.setUploadedBy(null);
+        stub(request, List.of(), List.of(), List.of(attachment));
+
+        IllegalStateException exception = assertThrows(
+                IllegalStateException.class,
+                () -> service.getDetail(REQUEST_ID, 1L, false, false)
+        );
+
+        assertEquals(
+                "Payment request attachment is missing uploadedBy",
+                exception.getMessage()
+        );
     }
 
     @Test
@@ -489,6 +509,7 @@ class GetPaymentRequestDetailServiceTest {
         attachment.setStoragePath("/private/" + filename);
         attachment.setContentType("application/pdf");
         attachment.setFileSize(1234L);
+        attachment.setUploadedBy(user(4L, "attachment-uploader", "附件上傳人"));
         setField(attachment, "createdAt", NOW);
         return attachment;
     }
