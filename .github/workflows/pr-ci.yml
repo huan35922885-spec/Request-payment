@@ -39,7 +39,6 @@ jobs:
       SPRING_DATASOURCE_URL: jdbc:postgresql://localhost:5432/payment_approval
       SPRING_DATASOURCE_USERNAME: payment_user
       SPRING_DATASOURCE_PASSWORD: ci-ephemeral-not-for-real-accounts
-      PAYMENT_ATTACHMENT_STORAGE_ROOT: ${{ runner.temp }}/payment-approval-attachments
 
     steps:
       - name: Checkout repository
@@ -59,6 +58,8 @@ jobs:
 
       - name: Run backend tests
         working-directory: backend
+        env:
+          PAYMENT_ATTACHMENT_STORAGE_ROOT: ${{ runner.temp }}/payment-approval-attachments
         run: ./mvnw -B clean test
 
       - name: Require zero skipped backend tests
@@ -72,6 +73,8 @@ jobs:
 
       - name: Compile backend
         working-directory: backend
+        env:
+          PAYMENT_ATTACHMENT_STORAGE_ROOT: ${{ runner.temp }}/payment-approval-attachments
         run: ./mvnw -B clean compile
 
   frontend:
