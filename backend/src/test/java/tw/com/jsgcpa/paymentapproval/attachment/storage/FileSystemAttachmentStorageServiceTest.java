@@ -5,16 +5,21 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 import java.io.IOException;
 import java.io.InputStream;
+import java.nio.file.AccessDeniedException;
+import java.nio.file.FileSystemException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.List;
+import java.util.Locale;
 import java.util.Set;
 
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.io.TempDir;
 import org.springframework.util.unit.DataSize;
 
 import tw.com.jsgcpa.paymentapproval.attachment.config.AttachmentStorageProperties;
@@ -23,13 +28,13 @@ import tw.com.jsgcpa.paymentapproval.attachment.validation.ValidatedAttachmentFi
 
 class FileSystemAttachmentStorageServiceTest {
 
-    @TempDir
     Path temporaryDirectory;
 
     private FileSystemAttachmentStorageService storageService;
 
     @BeforeEach
-    void setUp() {
+    void setUp() throws IOException {
+        temporaryDirectory = Files.createTempDirectory("attachment-storage-test-");
         AttachmentStorageProperties properties = new AttachmentStorageProperties();
         properties.setStorageRoot(temporaryDirectory.resolve("attachments"));
         properties.setMaxFileSize(DataSize.ofMegabytes(10));
@@ -39,6 +44,11 @@ class FileSystemAttachmentStorageServiceTest {
                 properties,
                 new AttachmentStorageKeyGenerator()
         );
+    }
+
+    @AfterEach
+    void tearDown() throws IOException {
+        deleteRecursively(temporaryDirectory);
     }
 
     @Test
@@ -98,6 +108,73 @@ class FileSystemAttachmentStorageServiceTest {
         assertTrue(exception.getCode().equals(
                 "ATTACHMENT_STORAGE_PATH_INVALID"
         ));
+    }
+
+    @Test
+    void rejectsStoreWhenParentDirectorySymlinkEscapesRoot() throws IOException {
+        Path testDirectory = Files.createTempDirectory("attachment-symlink-test-");
+        try {
+            Path root = testDirectory.resolve("attachments");
+            Path outside = testDirectory.resolve("outside");
+            Path paymentRequests = root.resolve("payment-requests");
+            Path escapedParent = paymentRequests.resolve("14");
+            Files.createDirectories(paymentRequests);
+            Files.createDirectories(outside);
+
+            try {
+                Files.createSymbolicLink(escapedParent, outside);
+            } catch (UnsupportedOperationException | SecurityException exception) {
+                Files.deleteIfExists(escapedParent);
+                assumeTrue(false, "symbolic links are not supported by this test environment");
+            } catch (AccessDeniedException exception) {
+                Files.deleteIfExists(escapedParent);
+                assumeTrue(false, "symbolic link creation is not permitted by this test environment");
+            } catch (FileSystemException exception) {
+                String message = exception.toString().toLowerCase(Locale.ROOT);
+                boolean permissionDenied = message.contains("permission")
+                        || message.contains("access denied")
+                        || message.contains("special privilege")
+                        || message.contains("特殊權限");
+                if (permissionDenied) {
+                    Files.deleteIfExists(escapedParent);
+                    assumeTrue(false, "symbolic link creation is not permitted by this test environment");
+                }
+                throw exception;
+            }
+
+            AttachmentStorageProperties properties = new AttachmentStorageProperties();
+            properties.setStorageRoot(root);
+            properties.setMaxFileSize(DataSize.ofMegabytes(10));
+            properties.setAllowedContentTypes(Set.of("application/pdf"));
+            properties.setAllowedExtensions(Set.of("pdf"));
+            storageService = new FileSystemAttachmentStorageService(
+                    properties,
+                    new AttachmentStorageKeyGenerator()
+            );
+
+            byte[] content = new byte[]{0x25, 0x50, 0x44, 0x46};
+            ValidatedAttachmentFile file = new ValidatedAttachmentFile(
+                    "invoice.pdf",
+                    "application/pdf",
+                    "pdf",
+                    content.length,
+                    content
+            );
+
+            AttachmentStorageException exception = assertThrows(
+                    AttachmentStorageException.class,
+                    () -> storageService.store(14L, file)
+            );
+
+            assertEquals("ATTACHMENT_STORAGE_PATH_INVALID", exception.getCode());
+            try (var files = Files.list(outside)) {
+                assertTrue(files.findAny().isEmpty(),
+                        "storage must not write outside the configured root");
+            }
+            assertNoTemporaryFilesRemain(testDirectory);
+        } finally {
+            deleteRecursively(testDirectory);
+        }
     }
 
     @Test
@@ -201,12 +278,31 @@ class FileSystemAttachmentStorageServiceTest {
     }
 
     private void assertNoTemporaryFilesRemain() throws IOException {
-        if (!Files.exists(temporaryDirectory)) {
+        assertNoTemporaryFilesRemain(temporaryDirectory);
+    }
+
+    private void assertNoTemporaryFilesRemain(Path directory) throws IOException {
+        if (!Files.exists(directory)) {
             return;
         }
-        try (var paths = Files.walk(temporaryDirectory)) {
+        try (var paths = Files.walk(directory)) {
             assertTrue(paths.noneMatch(path -> path.getFileName() != null
                     && path.getFileName().toString().startsWith(".attachment-")));
+        }
+    }
+
+    private void deleteRecursively(Path directory) throws IOException {
+        if (directory == null || !Files.exists(directory)) {
+            return;
+        }
+        try (var paths = Files.walk(directory)) {
+            List<Path> pathsToDelete = paths
+                    .sorted((left, right) -> Integer.compare(
+                            right.getNameCount(), left.getNameCount()))
+                    .toList();
+            for (Path path : pathsToDelete) {
+                Files.deleteIfExists(path);
+            }
         }
     }
 }
