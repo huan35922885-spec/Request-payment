@@ -56,6 +56,23 @@ jobs:
         working-directory: backend
         run: chmod +x mvnw
 
+      - name: Prepare synthetic CI master-data fixture
+        shell: bash
+        run: |
+          postgres_container="$(docker ps --filter 'ancestor=postgres:18' --format '{{.ID}}' | head -n 1)"
+          test -n "$postgres_container"
+          docker exec "$postgres_container" psql \
+            -U payment_user \
+            -d payment_approval \
+            -v ON_ERROR_STOP=1 \
+            -c "INSERT INTO expense_types (id, code, name, calculation_type, active)
+                VALUES (1, 'CI_FIXTURE', 'CI fixture expense', 'MANUAL', TRUE)
+                ON CONFLICT (id) DO UPDATE
+                SET code = EXCLUDED.code,
+                    name = EXCLUDED.name,
+                    calculation_type = EXCLUDED.calculation_type,
+                    active = EXCLUDED.active;"
+
       - name: Run backend tests
         working-directory: backend
         env:

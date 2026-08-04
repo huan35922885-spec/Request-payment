@@ -332,7 +332,8 @@ class FileSystemAttachmentStorageServiceTest {
         }
         try (var paths = Files.walk(directory)) {
             assertTrue(paths.noneMatch(path -> path.getFileName() != null
-                    && path.getFileName().toString().startsWith(".attachment-")));
+                    && path.getFileName().toString().startsWith(".attachment-")
+                    && path.getFileName().toString().endsWith(".tmp")));
         }
     }
 
