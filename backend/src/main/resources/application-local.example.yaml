@@ -1,7 +1,7 @@
 spring:
   datasource:
-    url: jdbc:postgresql://localhost:5432/payment_approval
-    username: payment_user
+    url: ${PAYMENT_DB_URL:jdbc:postgresql://localhost:5432/payment_approval}
+    username: ${PAYMENT_DB_USERNAME}
     password: ${PAYMENT_DB_PASSWORD}
 
 payment-approval:
