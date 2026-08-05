@@ -49,6 +49,9 @@ class DatabaseUserDetailsServiceTest {
     @Mock
     private AppUserRole paymentOperatorRole;
 
+    @Mock
+    private AppUserRole masterDataAdminRole;
+
     private DatabaseUserDetailsService service;
 
     @BeforeEach
@@ -103,6 +106,24 @@ class DatabaseUserDetailsServiceTest {
         AuthenticatedUserPrincipal principal = loadPrincipal();
 
         assertEquals(List.of("PAYMENT_OPERATOR"), authorityNames(principal));
+    }
+
+    @Test
+    void mapsMasterDataAdminAuthorityWithoutRolePrefixOrOtherAuthorities() {
+        when(user.getActive()).thenReturn(true);
+        when(masterDataAdminRole.getRoleCode())
+                .thenReturn(SecurityRole.MASTER_DATA_ADMIN);
+        stubRoles(masterDataAdminRole);
+
+        AuthenticatedUserPrincipal principal = loadPrincipal();
+
+        assertEquals(
+                List.of("MASTER_DATA_ADMIN"),
+                authorityNames(principal)
+        );
+        assertFalse(authorityNames(principal).contains("ROLE_MASTER_DATA_ADMIN"));
+        assertFalse(authorityNames(principal).contains("CASHIER"));
+        assertFalse(authorityNames(principal).contains("PAYMENT_OPERATOR"));
     }
 
     @Test

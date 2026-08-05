@@ -1,4 +1,7 @@
-export type SecurityRole = 'CASHIER' | 'PAYMENT_OPERATOR'
+export type SecurityRole =
+  | 'CASHIER'
+  | 'PAYMENT_OPERATOR'
+  | 'MASTER_DATA_ADMIN'
 
 export interface LoginRequest {
   username: string
