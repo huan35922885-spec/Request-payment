@@ -3,11 +3,17 @@ package tw.com.jsgcpa.paymentapproval.master.repository;
 import java.time.LocalDate;
 import java.util.List;
 import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.repository.query.Param;
 import org.springframework.data.jpa.repository.JpaRepository;
+import jakarta.persistence.LockModeType;
 import tw.com.jsgcpa.paymentapproval.master.entity.ExpensePriceSetting;
 
 public interface ExpensePriceSettingRepository extends JpaRepository<ExpensePriceSetting, Long> {
+
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("select priceSetting from ExpensePriceSetting priceSetting where priceSetting.id = :id")
+    java.util.Optional<ExpensePriceSetting> findByIdForUpdate(@Param("id") Long id);
 
     @Query("""
             select priceSetting

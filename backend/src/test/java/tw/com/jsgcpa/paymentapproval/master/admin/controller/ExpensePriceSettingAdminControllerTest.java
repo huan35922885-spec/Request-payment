@@ -29,9 +29,11 @@ import org.springframework.web.method.support.HandlerMethodArgumentResolver;
 import org.springframework.web.method.support.ModelAndViewContainer;
 import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
 import tw.com.jsgcpa.paymentapproval.common.exception.GlobalExceptionHandler;
+import tw.com.jsgcpa.paymentapproval.master.admin.dto.request.CloseExpensePriceSettingRequest;
 import tw.com.jsgcpa.paymentapproval.master.admin.dto.request.CreateExpensePriceSettingRequest;
-import tw.com.jsgcpa.paymentapproval.master.admin.service.ExpensePriceSettingAdminService;
+import tw.com.jsgcpa.paymentapproval.master.admin.dto.request.ReplaceExpensePriceSettingRequest;
 import tw.com.jsgcpa.paymentapproval.master.admin.dto.response.ExpensePriceSettingAdminResponse;
+import tw.com.jsgcpa.paymentapproval.master.admin.service.ExpensePriceSettingAdminService;
 import tw.com.jsgcpa.paymentapproval.security.authentication.AuthenticatedUserPrincipal;
 
 @WebMvcTest(ExpensePriceSettingAdminController.class)
@@ -67,43 +69,73 @@ class ExpensePriceSettingAdminControllerTest {
         }
     }
 
-    @Autowired
-    private MockMvc mockMvc;
-
-    @MockitoBean
-    private ExpensePriceSettingAdminService service;
+    @Autowired private MockMvc mockMvc;
+    @MockitoBean private ExpensePriceSettingAdminService service;
 
     @Test
-    void listPassesOptionalFiltersAndReturnsPlainResponse() throws Exception {
-        when(service.list(3L, true, LocalDate.of(2026, 8, 5)))
-                .thenReturn(List.of(response(true)));
-
-        mockMvc.perform(get("/api/admin/master/expense-price-settings")
-                        .param("expenseTypeId", "3")
-                        .param("active", "true")
-                        .param("effectiveOn", "2026-08-05"))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$[0].priceCode").value("DEFAULT"))
-                .andExpect(jsonPath("$[0].amount").value(100.0))
-                .andExpect(jsonPath("$[0].effective").value(true));
-
-        verify(service).list(3L, true, LocalDate.of(2026, 8, 5));
-    }
-
-    @Test
-    void createUsesAuthenticatedActorAndReturnsCreated() throws Exception {
+    void createUsesPriceNameAndReturnsCreated() throws Exception {
         when(service.create(eq(3L), any(CreateExpensePriceSettingRequest.class), eq(7L)))
-                .thenReturn(response(false));
+                .thenReturn(response(true));
 
         mockMvc.perform(post("/api/admin/master/expense-types/3/price-settings")
                         .contentType("application/json")
                         .content("""
-                                {"priceCode":" standard ","amount":100.00,
-                                 "effectiveFrom":"2026-08-10","effectiveTo":null}
+                                {"priceCode":" standard ","priceName":" Standard mail ",
+                                 "amount":100.00,"effectiveFrom":"2026-08-10"}
                                 """))
                 .andExpect(status().isCreated())
-                .andExpect(jsonPath("$.active").value(false));
+                .andExpect(jsonPath("$.active").value(true));
+        verify(service).create(eq(3L), any(CreateExpensePriceSettingRequest.class), eq(7L));
+    }
 
+    @Test
+    void effectivePassesRequestedPriceCode() throws Exception {
+        when(service.effective(3L, "NORMAL_MAIL", LocalDate.of(2026, 8, 5)))
+                .thenReturn(response(true));
+        mockMvc.perform(get("/api/admin/master/expense-types/3/price-settings/effective")
+                        .param("priceCode", "NORMAL_MAIL")
+                        .param("date", "2026-08-05"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.priceCode").value("DEFAULT"));
+        verify(service).effective(3L, "NORMAL_MAIL", LocalDate.of(2026, 8, 5));
+    }
+
+    @Test
+    void replaceAndCloseUsePostEndpointsAndAuthenticatedActor() throws Exception {
+        when(service.replace(eq(10L), any(ReplaceExpensePriceSettingRequest.class), eq(7L)))
+                .thenReturn(response(true));
+        mockMvc.perform(post("/api/admin/master/expense-price-settings/10/replace")
+                        .contentType("application/json")
+                        .content("""
+                                {"priceName":"Updated","amount":120.00,
+                                 "effectiveFrom":"2026-08-10","version":0,
+                                 "reason":"change"}
+                                """))
+                .andExpect(status().isOk());
+        verify(service).replace(eq(10L), any(ReplaceExpensePriceSettingRequest.class), eq(7L));
+
+        when(service.close(eq(10L), any(CloseExpensePriceSettingRequest.class), eq(7L)))
+                .thenReturn(response(true));
+        mockMvc.perform(post("/api/admin/master/expense-price-settings/10/close")
+                        .contentType("application/json")
+                        .content("""
+                                {"effectiveTo":"2026-08-20","version":0,
+                                 "reason":"close"}
+                                """))
+                .andExpect(status().isOk());
+        verify(service).close(eq(10L), any(CloseExpensePriceSettingRequest.class), eq(7L));
+    }
+
+    @Test
+    void createDoesNotAcceptBackendControlledFields() throws Exception {
+        mockMvc.perform(post("/api/admin/master/expense-types/3/price-settings")
+                        .contentType("application/json")
+                        .content("""
+                                {"priceCode":"DEFAULT","priceName":"Default",
+                                 "amount":10.00,"effectiveFrom":"2026-08-10",
+                                 "effectiveTo":"2026-08-20","active":false,"version":7}
+                                """))
+                .andExpect(status().isCreated());
         verify(service).create(eq(3L), any(CreateExpensePriceSettingRequest.class), eq(7L));
     }
 
@@ -111,16 +143,15 @@ class ExpensePriceSettingAdminControllerTest {
     void invalidCreateIsRejectedBeforeService() throws Exception {
         mockMvc.perform(post("/api/admin/master/expense-types/3/price-settings")
                         .contentType("application/json")
-                        .content("{\"priceCode\":\" \"}"))
+                        .content("{\"priceCode\":\" \",\"priceName\":\"x\"}"))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.code").value("VALIDATION_FAILED"));
-
         verify(service, never()).create(any(), any(), any());
     }
 
     private ExpensePriceSettingAdminResponse response(boolean active) {
         return new ExpensePriceSettingAdminResponse(
-                10L, 3L, "MEAL", "Meal", "DEFAULT", "DEFAULT",
+                10L, 3L, "MEAL", "Meal", "DEFAULT", "Default",
                 new BigDecimal("100.00"), LocalDate.of(2026, 8, 1), null,
                 active, active ? 1L : 0L, active,
                 OffsetDateTime.parse("2026-08-05T00:00:00+08:00"),

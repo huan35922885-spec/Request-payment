@@ -8,7 +8,6 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.GetMapping;
-import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -16,9 +15,10 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 import tw.com.jsgcpa.paymentapproval.master.admin.dto.request.CreateExpensePriceSettingRequest;
+import tw.com.jsgcpa.paymentapproval.master.admin.dto.request.CloseExpensePriceSettingRequest;
 import tw.com.jsgcpa.paymentapproval.master.admin.dto.request.DeactivateExpensePriceSettingRequest;
 import tw.com.jsgcpa.paymentapproval.master.admin.dto.request.ExpensePriceSettingVersionRequest;
-import tw.com.jsgcpa.paymentapproval.master.admin.dto.request.UpdateExpensePriceSettingRequest;
+import tw.com.jsgcpa.paymentapproval.master.admin.dto.request.ReplaceExpensePriceSettingRequest;
 import tw.com.jsgcpa.paymentapproval.master.admin.dto.response.ExpensePriceSettingAdminResponse;
 import tw.com.jsgcpa.paymentapproval.master.admin.service.ExpensePriceSettingAdminService;
 import tw.com.jsgcpa.paymentapproval.security.authentication.AuthenticatedUserPrincipal;
@@ -55,10 +55,11 @@ public class ExpensePriceSettingAdminController {
     @GetMapping("/expense-types/{expenseTypeId}/price-settings/effective")
     public ResponseEntity<ExpensePriceSettingAdminResponse> effective(
             @PathVariable Long expenseTypeId,
+            @RequestParam String priceCode,
             @RequestParam
             @DateTimeFormat(pattern = ISO_DATE) LocalDate date
     ) {
-        return ResponseEntity.ok(service.effective(expenseTypeId, date));
+        return ResponseEntity.ok(service.effective(expenseTypeId, priceCode, date));
     }
 
     @PostMapping("/expense-types/{expenseTypeId}/price-settings")
@@ -72,13 +73,22 @@ public class ExpensePriceSettingAdminController {
         );
     }
 
-    @PatchMapping("/expense-price-settings/{id}")
-    public ResponseEntity<ExpensePriceSettingAdminResponse> update(
+    @PostMapping("/expense-price-settings/{id}/replace")
+    public ResponseEntity<ExpensePriceSettingAdminResponse> replace(
             @PathVariable Long id,
-            @Valid @RequestBody UpdateExpensePriceSettingRequest request,
+            @Valid @RequestBody ReplaceExpensePriceSettingRequest request,
             @AuthenticationPrincipal AuthenticatedUserPrincipal principal
     ) {
-        return ResponseEntity.ok(service.update(id, request, principal.getUserId()));
+        return ResponseEntity.ok(service.replace(id, request, principal.getUserId()));
+    }
+
+    @PostMapping("/expense-price-settings/{id}/close")
+    public ResponseEntity<ExpensePriceSettingAdminResponse> close(
+            @PathVariable Long id,
+            @Valid @RequestBody CloseExpensePriceSettingRequest request,
+            @AuthenticationPrincipal AuthenticatedUserPrincipal principal
+    ) {
+        return ResponseEntity.ok(service.close(id, request, principal.getUserId()));
     }
 
     @PostMapping("/expense-price-settings/{id}/activate")

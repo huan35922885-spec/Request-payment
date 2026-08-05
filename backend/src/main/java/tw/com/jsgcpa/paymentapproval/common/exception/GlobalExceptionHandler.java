@@ -25,6 +25,7 @@ import tw.com.jsgcpa.paymentapproval.attachment.exception.PaymentRequestAttachme
 import tw.com.jsgcpa.paymentapproval.attachment.exception.PaymentRequestAttachmentDeleteException;
 import tw.com.jsgcpa.paymentapproval.payment.exception.PaymentDraftBusinessException;
 import tw.com.jsgcpa.paymentapproval.master.admin.exception.ExpenseTypeAdminBusinessException;
+import tw.com.jsgcpa.paymentapproval.master.admin.exception.ExpensePriceSettingAdminBusinessException;
 import tw.com.jsgcpa.paymentapproval.security.exception.AuthenticationBusinessException;
 
 @RestControllerAdvice
@@ -231,6 +232,29 @@ public class GlobalExceptionHandler {
         HttpStatus status = switch (exception.getCode()) {
             case "EXPENSE_TYPE_NOT_FOUND",
                     "EXPENSE_PRICE_SETTING_NOT_FOUND" -> HttpStatus.NOT_FOUND;
+            default -> HttpStatus.CONFLICT;
+        };
+        return errorResponse(
+                status,
+                exception.getCode(),
+                exception.getMessage(),
+                request,
+                List.of()
+        );
+    }
+
+    @ExceptionHandler(ExpensePriceSettingAdminBusinessException.class)
+    public ResponseEntity<ApiErrorResponse> handleExpensePriceSettingAdminBusinessException(
+            ExpensePriceSettingAdminBusinessException exception,
+            HttpServletRequest request
+    ) {
+        HttpStatus status = switch (exception.getCode()) {
+            case "EXPENSE_PRICE_SETTING_NOT_FOUND", "EXPENSE_TYPE_NOT_FOUND" ->
+                    HttpStatus.NOT_FOUND;
+            case "EXPENSE_PRICE_BACKDATE_FORBIDDEN",
+                    "EXPENSE_PRICE_PERIOD_INVALID",
+                    "EXPENSE_PRICE_PRICE_CODE_INVALID",
+                    "EXPENSE_PRICE_SETTING_UNSUPPORTED" -> HttpStatus.BAD_REQUEST;
             default -> HttpStatus.CONFLICT;
         };
         return errorResponse(

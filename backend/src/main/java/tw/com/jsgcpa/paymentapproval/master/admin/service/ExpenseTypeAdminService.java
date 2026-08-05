@@ -7,7 +7,6 @@ import java.time.ZoneId;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Optional;
 import java.util.UUID;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.dao.DataIntegrityViolationException;
@@ -120,7 +119,7 @@ public class ExpenseTypeAdminService {
             RenameExpenseTypeRequest request,
             Long actorId
     ) {
-        ExpenseType expenseType = findExpenseType(id);
+        ExpenseType expenseType = findExpenseTypeForWrite(id);
         validateVersion(expenseType, request.version());
         if (expenseType.getName().equals(request.name())) {
             throw conflict(
@@ -189,7 +188,7 @@ public class ExpenseTypeAdminService {
             DeactivateExpenseTypeRequest request,
             Long actorId
     ) {
-        ExpenseType expenseType = findExpenseType(id);
+        ExpenseType expenseType = findExpenseTypeForWrite(id);
         validateVersion(expenseType, request.version());
         if (!Boolean.TRUE.equals(expenseType.getActive())) {
             throw conflict(
@@ -222,15 +221,11 @@ public class ExpenseTypeAdminService {
     }
 
     private ExpenseType findExpenseTypeForWrite(Long id) {
-        Optional<ExpenseType> locked = expenseTypeRepository.findByIdForUpdate(
-                id == null ? -1L : id
-        );
-        if (locked != null && locked.isPresent()) {
-            return locked.get();
-        }
-        // Keeps the service unit-test seam useful for repository mocks while
-        // production always resolves an existing row through the lock query.
-        return findExpenseType(id);
+        return expenseTypeRepository.findByIdForUpdate(id == null ? -1L : id)
+                .orElseThrow(() -> conflict(
+                        "EXPENSE_TYPE_NOT_FOUND",
+                        "Expense type not found: " + id
+                ));
     }
 
     private void validateVersion(ExpenseType expenseType, Long requestVersion) {

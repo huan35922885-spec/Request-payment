@@ -8,18 +8,20 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Objects;
 import java.util.UUID;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.dao.OptimisticLockingFailureException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import tw.com.jsgcpa.paymentapproval.master.admin.dto.request.CloseExpensePriceSettingRequest;
 import tw.com.jsgcpa.paymentapproval.master.admin.dto.request.CreateExpensePriceSettingRequest;
 import tw.com.jsgcpa.paymentapproval.master.admin.dto.request.DeactivateExpensePriceSettingRequest;
 import tw.com.jsgcpa.paymentapproval.master.admin.dto.request.ExpensePriceSettingVersionRequest;
-import tw.com.jsgcpa.paymentapproval.master.admin.dto.request.UpdateExpensePriceSettingRequest;
+import tw.com.jsgcpa.paymentapproval.master.admin.dto.request.ReplaceExpensePriceSettingRequest;
 import tw.com.jsgcpa.paymentapproval.master.admin.dto.response.ExpensePriceSettingAdminResponse;
-import tw.com.jsgcpa.paymentapproval.master.admin.exception.ExpenseTypeAdminBusinessException;
+import tw.com.jsgcpa.paymentapproval.master.admin.exception.ExpensePriceSettingAdminBusinessException;
 import tw.com.jsgcpa.paymentapproval.master.audit.enums.MasterDataAuditAction;
 import tw.com.jsgcpa.paymentapproval.master.audit.enums.MasterDataAuditTargetType;
 import tw.com.jsgcpa.paymentapproval.master.audit.service.MasterDataAuditRecordCommand;
@@ -37,6 +39,7 @@ import tw.com.jsgcpa.paymentapproval.payment.service.ExpensePriceResolver;
 public class ExpensePriceSettingAdminService {
 
     private static final ZoneId BUSINESS_ZONE = ZoneId.of("Asia/Taipei");
+    private static final String PRICE_CODE_PATTERN = "^[A-Z][A-Z0-9_]*$";
 
     private final ExpensePriceSettingRepository priceSettingRepository;
     private final ExpenseTypeRepository expenseTypeRepository;
@@ -127,25 +130,26 @@ public class ExpensePriceSettingAdminService {
     @Transactional(readOnly = true)
     public ExpensePriceSettingAdminResponse effective(
             Long expenseTypeId,
+            String requestedPriceCode,
             LocalDate date
     ) {
         ExpenseType type = findExpenseType(expenseTypeId);
         ensurePricedType(type);
+        String priceCode = normalizePriceCode(requestedPriceCode);
         try {
-            ExpensePriceSetting setting = priceResolver.resolve(
-                    expenseTypeId,
-                    "DEFAULT",
+            return toResponse(
+                    priceResolver.resolve(expenseTypeId, priceCode, date),
                     date
             );
-            return toResponse(setting, date);
         } catch (PaymentDraftBusinessException exception) {
             if ("PRICE_SETTING_NOT_FOUND".equals(exception.getCode())) {
-                throw business(
+                throw notFound(
                         "EXPENSE_PRICE_SETTING_NOT_FOUND",
-                        "No effective price setting found for expense type: " + expenseTypeId
+                        "No effective price setting found for expense type "
+                                + expenseTypeId + " and price code " + priceCode
                 );
             }
-            throw business(
+            throw conflict(
                     "EXPENSE_PRICE_DATABASE_CONFLICT",
                     exception.getMessage()
             );
@@ -159,68 +163,122 @@ public class ExpensePriceSettingAdminService {
     ) {
         ExpenseType type = lockExpenseType(expenseTypeId);
         ensurePricedType(type);
-        validateDateRange(request.effectiveFrom(), request.effectiveTo());
+        rejectBackdate(request.effectiveFrom());
         String priceCode = normalizePriceCode(request.priceCode());
         rejectOverlap(
                 expenseTypeId,
                 priceCode,
                 request.effectiveFrom(),
-                request.effectiveTo(),
+                null,
                 0L,
-                false
+                true
         );
 
         ExpensePriceSetting setting = new ExpensePriceSetting();
         setting.setExpenseType(type);
         setting.setPriceCode(priceCode);
-        setting.setPriceName(priceCode);
+        setting.setPriceName(request.priceName());
         setting.setUnitPrice(request.amount());
         setting.setEffectiveFrom(request.effectiveFrom());
-        setting.setEffectiveTo(request.effectiveTo());
-        setting.setActive(false);
+        setting.setEffectiveTo(null);
+        setting.setActive(true);
         ExpensePriceSetting saved = save(setting);
-        recordAudit(saved, actorId, MasterDataAuditAction.EXPENSE_PRICE_CREATE,
-                null, null, null);
+        recordAudit(
+                UUID.randomUUID(), saved, actorId,
+                MasterDataAuditAction.EXPENSE_PRICE_CREATE,
+                null, null, null
+        );
         return toResponse(saved, today());
     }
 
-    public ExpensePriceSettingAdminResponse update(
+    public ExpensePriceSettingAdminResponse replace(
             Long id,
-            UpdateExpensePriceSettingRequest request,
+            ReplaceExpensePriceSettingRequest request,
             Long actorId
     ) {
-        ExpensePriceSetting setting = lockPriceSetting(id);
+        ExpensePriceSetting setting = findPriceSetting(id);
         ExpenseType type = lockExpenseType(setting.getExpenseType().getId());
-        if (Boolean.TRUE.equals(setting.getActive())) {
-            throw conflict(
-                    "EXPENSE_PRICE_SETTING_ACTIVE_EDIT_FORBIDDEN",
-                    "Active price setting cannot be edited"
-            );
-        }
+        setting = lockPriceSetting(id);
+        ensurePricedType(type);
         validateVersion(setting.getVersion(), request.version());
-        validateDateRange(request.effectiveFrom(), request.effectiveTo());
-        if (setting.getUnitPrice().compareTo(request.amount()) == 0
-                && setting.getEffectiveFrom().equals(request.effectiveFrom())
-                && java.util.Objects.equals(
-                        setting.getEffectiveTo(), request.effectiveTo()
-                )) {
+        if (!Boolean.TRUE.equals(setting.getActive())) {
             throw conflict(
-                    "EXPENSE_PRICE_SETTING_UNCHANGED",
-                    "Price setting is unchanged"
+                    "EXPENSE_PRICE_SETTING_INACTIVE_REPLACE_FORBIDDEN",
+                    "Only an active price setting can be replaced"
             );
         }
-        rejectOverlap(
-                type.getId(), setting.getPriceCode(), request.effectiveFrom(),
-                request.effectiveTo(), setting.getId(), false
-        );
+        rejectBackdate(request.effectiveFrom());
+        if (!request.effectiveFrom().isAfter(setting.getEffectiveFrom())
+                || (setting.getEffectiveTo() != null
+                    && request.effectiveFrom().isAfter(setting.getEffectiveTo()))) {
+            throw conflict(
+                    "EXPENSE_PRICE_PERIOD_INVALID",
+                    "Replacement effectiveFrom must be inside the current price period"
+            );
+        }
+
+        LocalDate newEffectiveTo = request.effectiveFrom().minusDays(1);
         Map<String, Object> before = snapshot(setting);
         Long beforeVersion = setting.getVersion();
-        setting.setUnitPrice(request.amount());
-        setting.setEffectiveFrom(request.effectiveFrom());
+        UUID operationId = UUID.randomUUID();
+
+        setting.setEffectiveTo(newEffectiveTo);
+        ExpensePriceSetting closed = save(setting);
+        recordAudit(
+                operationId, closed, actorId,
+                MasterDataAuditAction.EXPENSE_PRICE_REPLACE,
+                before, beforeVersion, request.reason()
+        );
+
+        ExpensePriceSetting replacement = new ExpensePriceSetting();
+        replacement.setExpenseType(type);
+        replacement.setPriceCode(setting.getPriceCode());
+        replacement.setPriceName(request.priceName());
+        replacement.setUnitPrice(request.amount());
+        replacement.setEffectiveFrom(request.effectiveFrom());
+        replacement.setEffectiveTo(null);
+        replacement.setActive(true);
+        ExpensePriceSetting savedReplacement = save(replacement);
+        recordAudit(
+                operationId, savedReplacement, actorId,
+                MasterDataAuditAction.EXPENSE_PRICE_REPLACE,
+                null, null, request.reason()
+        );
+        return toResponse(savedReplacement, today());
+    }
+
+    public ExpensePriceSettingAdminResponse close(
+            Long id,
+            CloseExpensePriceSettingRequest request,
+            Long actorId
+    ) {
+        ExpensePriceSetting setting = findPriceSetting(id);
+        ExpenseType type = lockExpenseType(setting.getExpenseType().getId());
+        setting = lockPriceSetting(id);
+        ensurePricedType(type);
+        validateVersion(setting.getVersion(), request.version());
+        if (!Boolean.TRUE.equals(setting.getActive())) {
+            throw conflict(
+                    "EXPENSE_PRICE_SETTING_ALREADY_INACTIVE",
+                    "Inactive price setting cannot be closed"
+            );
+        }
+        if (request.effectiveTo().isBefore(setting.getEffectiveFrom())
+                || request.effectiveTo().isBefore(today())) {
+            throw conflict(
+                    "EXPENSE_PRICE_PERIOD_INVALID",
+                    "effectiveTo must not be before effectiveFrom or today"
+            );
+        }
+        Map<String, Object> before = snapshot(setting);
+        Long beforeVersion = setting.getVersion();
         setting.setEffectiveTo(request.effectiveTo());
         ExpensePriceSetting saved = save(setting);
-        recordAudit(saved, actorId, MasterDataAuditAction.EXPENSE_PRICE_REPLACE,
-                before, beforeVersion, null);
+        recordAudit(
+                UUID.randomUUID(), saved, actorId,
+                MasterDataAuditAction.EXPENSE_PRICE_REPLACE,
+                before, beforeVersion, request.reason()
+        );
         return toResponse(saved, today());
     }
 
@@ -229,8 +287,9 @@ public class ExpensePriceSettingAdminService {
             ExpensePriceSettingVersionRequest request,
             Long actorId
     ) {
-        ExpensePriceSetting setting = lockPriceSetting(id);
+        ExpensePriceSetting setting = findPriceSetting(id);
         ExpenseType type = lockExpenseType(setting.getExpenseType().getId());
+        setting = lockPriceSetting(id);
         validateVersion(setting.getVersion(), request.version());
         if (Boolean.TRUE.equals(setting.getActive())) {
             throw conflict(
@@ -247,8 +306,11 @@ public class ExpensePriceSettingAdminService {
         Long beforeVersion = setting.getVersion();
         setting.setActive(true);
         ExpensePriceSetting saved = save(setting);
-        recordAudit(saved, actorId, MasterDataAuditAction.EXPENSE_PRICE_REPLACE,
-                before, beforeVersion, null);
+        recordAudit(
+                UUID.randomUUID(), saved, actorId,
+                MasterDataAuditAction.EXPENSE_PRICE_REPLACE,
+                before, beforeVersion, null
+        );
         return toResponse(saved, today());
     }
 
@@ -257,8 +319,9 @@ public class ExpensePriceSettingAdminService {
             DeactivateExpensePriceSettingRequest request,
             Long actorId
     ) {
-        ExpensePriceSetting setting = lockPriceSetting(id);
+        ExpensePriceSetting setting = findPriceSetting(id);
         ExpenseType type = lockExpenseType(setting.getExpenseType().getId());
+        setting = lockPriceSetting(id);
         validateVersion(setting.getVersion(), request.version());
         if (!Boolean.TRUE.equals(setting.getActive())) {
             throw conflict(
@@ -268,22 +331,27 @@ public class ExpensePriceSettingAdminService {
         }
         ensurePricedType(type);
         LocalDate today = today();
-        List<ExpensePriceSetting> current =
-                priceSettingRepository.findEffectivePriceSettings(
-                        type.getId(), setting.getPriceCode(), today
+        if (Boolean.TRUE.equals(type.getActive())) {
+            List<ExpensePriceSetting> current =
+                    priceSettingRepository.findEffectivePriceSettings(
+                            type.getId(), setting.getPriceCode(), today
+                    );
+            if (current.size() == 1 && current.get(0).getId().equals(setting.getId())) {
+                throw conflict(
+                        "EXPENSE_PRICE_CURRENT_REQUIRED",
+                        "An active expense type must keep one current price"
                 );
-        if (current.size() == 1 && current.get(0).getId().equals(setting.getId())) {
-            throw conflict(
-                    "EXPENSE_PRICE_CURRENT_REQUIRED",
-                    "A current effective price is required"
-            );
+            }
         }
         Map<String, Object> before = snapshot(setting);
         Long beforeVersion = setting.getVersion();
         setting.setActive(false);
         ExpensePriceSetting saved = save(setting);
-        recordAudit(saved, actorId, MasterDataAuditAction.EXPENSE_PRICE_REPLACE,
-                before, beforeVersion, request.reason());
+        recordAudit(
+                UUID.randomUUID(), saved, actorId,
+                MasterDataAuditAction.EXPENSE_PRICE_REPLACE,
+                before, beforeVersion, request.reason()
+        );
         return toResponse(saved, today);
     }
 
@@ -335,18 +403,25 @@ public class ExpensePriceSettingAdminService {
         }
     }
 
-    private ExpensePriceSetting lockPriceSetting(Long id) {
-        ExpensePriceSetting setting = priceSettingRepository.findById(id == null ? -1L : id)
-                .orElseThrow(() -> business(
+    private ExpensePriceSetting findPriceSetting(Long id) {
+        return priceSettingRepository.findById(id == null ? -1L : id)
+                .orElseThrow(() -> notFound(
                         "EXPENSE_PRICE_SETTING_NOT_FOUND",
                         "Price setting not found: " + id
                 ));
-        return setting;
+    }
+
+    private ExpensePriceSetting lockPriceSetting(Long id) {
+        return priceSettingRepository.findByIdForUpdate(id == null ? -1L : id)
+                .orElseThrow(() -> notFound(
+                        "EXPENSE_PRICE_SETTING_NOT_FOUND",
+                        "Price setting not found: " + id
+                ));
     }
 
     private ExpenseType lockExpenseType(Long id) {
         return expenseTypeRepository.findByIdForUpdate(id)
-                .orElseThrow(() -> business(
+                .orElseThrow(() -> notFound(
                         "EXPENSE_TYPE_NOT_FOUND",
                         "Expense type not found: " + id
                 ));
@@ -354,7 +429,7 @@ public class ExpensePriceSettingAdminService {
 
     private ExpenseType findExpenseType(Long id) {
         return expenseTypeRepository.findById(id == null ? -1L : id)
-                .orElseThrow(() -> business(
+                .orElseThrow(() -> notFound(
                         "EXPENSE_TYPE_NOT_FOUND",
                         "Expense type not found: " + id
                 ));
@@ -375,17 +450,34 @@ public class ExpensePriceSettingAdminService {
                 || calculationType == CalculationType.CONFIRMATION;
     }
 
-    private void validateDateRange(LocalDate from, LocalDate to) {
-        if (to != null && to.isBefore(from)) {
-            throw conflict(
-                    "EXPENSE_PRICE_PERIOD_INVALID",
-                    "effectiveTo must not be before effectiveFrom"
+    private void rejectBackdate(LocalDate date) {
+        if (date.isBefore(today())) {
+            throw badRequest(
+                    "EXPENSE_PRICE_BACKDATE_FORBIDDEN",
+                    "effectiveFrom must not be before today"
             );
         }
     }
 
+    private String normalizePriceCode(String value) {
+        if (value == null) {
+            throw badRequest(
+                    "EXPENSE_PRICE_PRICE_CODE_INVALID",
+                    "priceCode is required"
+            );
+        }
+        String normalized = value.strip().toUpperCase(Locale.ROOT);
+        if (!normalized.matches(PRICE_CODE_PATTERN)) {
+            throw badRequest(
+                    "EXPENSE_PRICE_PRICE_CODE_INVALID",
+                    "priceCode must contain only uppercase letters, digits, and underscores"
+            );
+        }
+        return normalized;
+    }
+
     private void validateVersion(Long current, Long expected) {
-        if (!current.equals(expected)) {
+        if (!Objects.equals(current, expected)) {
             throw conflict(
                     "EXPENSE_PRICE_SETTING_VERSION_CONFLICT",
                     "Price setting version does not match"
@@ -393,15 +485,12 @@ public class ExpensePriceSettingAdminService {
         }
     }
 
-    private String normalizePriceCode(String value) {
-        return value.strip().toUpperCase(Locale.ROOT);
-    }
-
     private LocalDate today() {
         return LocalDate.now(clock);
     }
 
     private void recordAudit(
+            UUID operationId,
             ExpensePriceSetting setting,
             Long actorId,
             MasterDataAuditAction action,
@@ -410,7 +499,7 @@ public class ExpensePriceSettingAdminService {
             String reason
     ) {
         auditService.record(new MasterDataAuditRecordCommand(
-                UUID.randomUUID(),
+                operationId,
                 MasterDataAuditTargetType.EXPENSE_PRICE_SETTING,
                 setting.getId(),
                 action,
@@ -431,22 +520,17 @@ public class ExpensePriceSettingAdminService {
         snapshot.put("priceCode", setting.getPriceCode());
         snapshot.put("priceName", setting.getPriceName());
         snapshot.put("amount", setting.getUnitPrice());
-        // Audit JSONB is serialized by Hibernate's JSON mapper. Store dates
-        // as ISO strings so this remains independent of mapper JSR-310 setup.
         snapshot.put(
                 "effectiveFrom",
                 setting.getEffectiveFrom() == null
-                        ? null
-                        : setting.getEffectiveFrom().toString()
+                        ? null : setting.getEffectiveFrom().toString()
         );
         snapshot.put(
                 "effectiveTo",
                 setting.getEffectiveTo() == null
-                        ? null
-                        : setting.getEffectiveTo().toString()
+                        ? null : setting.getEffectiveTo().toString()
         );
         snapshot.put("active", setting.getActive());
-        snapshot.put("version", setting.getVersion());
         return snapshot;
     }
 
@@ -460,29 +544,29 @@ public class ExpensePriceSettingAdminService {
                     || !setting.getEffectiveTo().isBefore(effectiveDate));
         ExpenseType type = setting.getExpenseType();
         return new ExpensePriceSettingAdminResponse(
-                setting.getId(),
-                type.getId(),
-                type.getCode(),
-                type.getName(),
-                setting.getPriceCode(),
-                setting.getPriceName(),
-                setting.getUnitPrice(),
-                setting.getEffectiveFrom(),
-                setting.getEffectiveTo(),
-                setting.getActive(),
-                setting.getVersion(),
-                effective,
-                setting.getCreatedAt(),
-                setting.getUpdatedAt()
+                setting.getId(), type.getId(), type.getCode(), type.getName(),
+                setting.getPriceCode(), setting.getPriceName(), setting.getUnitPrice(),
+                setting.getEffectiveFrom(), setting.getEffectiveTo(), setting.getActive(),
+                setting.getVersion(), effective, setting.getCreatedAt(), setting.getUpdatedAt()
         );
     }
 
-    private ExpenseTypeAdminBusinessException conflict(String code, String message) {
-        return new ExpenseTypeAdminBusinessException(code, message);
+    private ExpensePriceSettingAdminBusinessException badRequest(
+            String code, String message
+    ) {
+        return new ExpensePriceSettingAdminBusinessException(code, message);
     }
 
-    private ExpenseTypeAdminBusinessException business(String code, String message) {
-        return new ExpenseTypeAdminBusinessException(code, message);
+    private ExpensePriceSettingAdminBusinessException conflict(
+            String code, String message
+    ) {
+        return new ExpensePriceSettingAdminBusinessException(code, message);
+    }
+
+    private ExpensePriceSettingAdminBusinessException notFound(
+            String code, String message
+    ) {
+        return new ExpensePriceSettingAdminBusinessException(code, message);
     }
 
     private boolean hasSqlState(Throwable failure, String expectedSqlState) {

@@ -183,7 +183,7 @@ class ExpenseTypeAdminServiceTest {
                 false,
                 0L
         );
-        when(expenseTypeRepository.findById(20L)).thenReturn(Optional.of(expenseType));
+        when(expenseTypeRepository.findByIdForUpdate(20L)).thenReturn(Optional.of(expenseType));
         when(expenseTypeRepository.saveAndFlush(expenseType))
                 .thenAnswer(invocation -> incrementVersion(invocation.getArgument(0)));
 
@@ -209,7 +209,7 @@ class ExpenseTypeAdminServiceTest {
         ExpenseType expenseType = expenseType(
                 20L, "MAIL", "Same", CalculationType.MANUAL, true, 2L
         );
-        when(expenseTypeRepository.findById(20L)).thenReturn(Optional.of(expenseType));
+        when(expenseTypeRepository.findByIdForUpdate(20L)).thenReturn(Optional.of(expenseType));
 
         ExpenseTypeAdminBusinessException exception = assertThrows(
                 ExpenseTypeAdminBusinessException.class,
@@ -226,7 +226,7 @@ class ExpenseTypeAdminServiceTest {
         ExpenseType expenseType = expenseType(
                 20L, "MAIL", "Same", CalculationType.MANUAL, true, 2L
         );
-        when(expenseTypeRepository.findById(20L)).thenReturn(Optional.of(expenseType));
+        when(expenseTypeRepository.findByIdForUpdate(20L)).thenReturn(Optional.of(expenseType));
 
         ExpenseTypeAdminBusinessException exception = assertThrows(
                 ExpenseTypeAdminBusinessException.class,
@@ -242,7 +242,7 @@ class ExpenseTypeAdminServiceTest {
         ExpenseType expenseType = expenseType(
                 21L, "MANUAL", "Manual", CalculationType.MANUAL, false, 0L
         );
-        when(expenseTypeRepository.findById(21L)).thenReturn(Optional.of(expenseType));
+        when(expenseTypeRepository.findByIdForUpdate(21L)).thenReturn(Optional.of(expenseType));
         when(expenseTypeRepository.saveAndFlush(expenseType))
                 .thenAnswer(invocation -> incrementVersion(invocation.getArgument(0)));
 
@@ -261,7 +261,7 @@ class ExpenseTypeAdminServiceTest {
         ExpenseType expenseType = expenseType(
                 22L, "TRAVEL", "Travel", CalculationType.TRAVEL, false, 0L
         );
-        when(expenseTypeRepository.findById(22L)).thenReturn(Optional.of(expenseType));
+        when(expenseTypeRepository.findByIdForUpdate(22L)).thenReturn(Optional.of(expenseType));
         when(expenseTypeRepository.saveAndFlush(expenseType))
                 .thenAnswer(invocation -> incrementVersion(invocation.getArgument(0)));
 
@@ -275,7 +275,7 @@ class ExpenseTypeAdminServiceTest {
         ExpenseType expenseType = expenseType(
                 23L, "MEAL_NEW", "Meal", CalculationType.MEAL, false, 0L
         );
-        when(expenseTypeRepository.findById(23L)).thenReturn(Optional.of(expenseType));
+        when(expenseTypeRepository.findByIdForUpdate(23L)).thenReturn(Optional.of(expenseType));
         when(expensePriceSettingRepository.findEffectivePrices(23L, TODAY))
                 .thenReturn(List.of());
 
@@ -296,7 +296,7 @@ class ExpenseTypeAdminServiceTest {
         ExpenseType expenseType = expenseType(
                 24L, "MEAL_NEW", "Meal", CalculationType.MEAL, false, 0L
         );
-        when(expenseTypeRepository.findById(24L)).thenReturn(Optional.of(expenseType));
+        when(expenseTypeRepository.findByIdForUpdate(24L)).thenReturn(Optional.of(expenseType));
         when(expensePriceSettingRepository.findEffectivePrices(24L, TODAY))
                 .thenReturn(List.of(new ExpensePriceSetting()));
         when(expenseTypeRepository.saveAndFlush(expenseType))
@@ -314,7 +314,7 @@ class ExpenseTypeAdminServiceTest {
         ExpenseType active = expenseType(
                 25L, "ACTIVE", "Active", CalculationType.MANUAL, true, 0L
         );
-        when(expenseTypeRepository.findById(25L)).thenReturn(Optional.of(active));
+        when(expenseTypeRepository.findByIdForUpdate(25L)).thenReturn(Optional.of(active));
         ExpenseTypeAdminBusinessException activeException = assertThrows(
                 ExpenseTypeAdminBusinessException.class,
                 () -> service.activate(25L, new ExpenseTypeVersionRequest(0L), ACTOR_ID)
@@ -324,7 +324,7 @@ class ExpenseTypeAdminServiceTest {
         ExpenseType inactive = expenseType(
                 26L, "INACTIVE", "Inactive", CalculationType.MANUAL, false, 0L
         );
-        when(expenseTypeRepository.findById(26L)).thenReturn(Optional.of(inactive));
+        when(expenseTypeRepository.findByIdForUpdate(26L)).thenReturn(Optional.of(inactive));
         ExpenseTypeAdminBusinessException inactiveException = assertThrows(
                 ExpenseTypeAdminBusinessException.class,
                 () -> service.deactivate(
@@ -342,7 +342,7 @@ class ExpenseTypeAdminServiceTest {
         ExpenseType expenseType = expenseType(
                 27L, "ACTIVE", "Active", CalculationType.MANUAL, true, 2L
         );
-        when(expenseTypeRepository.findById(27L)).thenReturn(Optional.of(expenseType));
+        when(expenseTypeRepository.findByIdForUpdate(27L)).thenReturn(Optional.of(expenseType));
         when(expenseTypeRepository.saveAndFlush(expenseType))
                 .thenAnswer(invocation -> incrementVersion(invocation.getArgument(0)));
 
@@ -366,7 +366,7 @@ class ExpenseTypeAdminServiceTest {
         ExpenseType expenseType = expenseType(
                 28L, "LOCK", "Before", CalculationType.MANUAL, true, 0L
         );
-        when(expenseTypeRepository.findById(28L)).thenReturn(Optional.of(expenseType));
+        when(expenseTypeRepository.findByIdForUpdate(28L)).thenReturn(Optional.of(expenseType));
         when(expenseTypeRepository.saveAndFlush(expenseType))
                 .thenThrow(new OptimisticLockingFailureException("stale"));
 
@@ -384,7 +384,7 @@ class ExpenseTypeAdminServiceTest {
         ExpenseType expenseType = expenseType(
                 29L, "AUDIT", "Before", CalculationType.MANUAL, true, 0L
         );
-        when(expenseTypeRepository.findById(29L)).thenReturn(Optional.of(expenseType));
+        when(expenseTypeRepository.findByIdForUpdate(29L)).thenReturn(Optional.of(expenseType));
         when(expenseTypeRepository.saveAndFlush(expenseType))
                 .thenAnswer(invocation -> incrementVersion(invocation.getArgument(0)));
         when(auditService.record(any()))
@@ -400,7 +400,7 @@ class ExpenseTypeAdminServiceTest {
 
     @Test
     void returnsNotFoundForMissingExpenseType() {
-        when(expenseTypeRepository.findById(99L)).thenReturn(Optional.empty());
+        when(expenseTypeRepository.findByIdForUpdate(99L)).thenReturn(Optional.empty());
 
         ExpenseTypeAdminBusinessException exception = assertThrows(
                 ExpenseTypeAdminBusinessException.class,
