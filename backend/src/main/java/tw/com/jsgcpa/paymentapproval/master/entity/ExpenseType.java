@@ -8,12 +8,14 @@ import tw.com.jsgcpa.paymentapproval.master.enums.CalculationType;
 @Table(name = "expense_types")
 public class ExpenseType extends BaseTimeEntity {
     @Id @GeneratedValue(strategy = GenerationType.IDENTITY) @Column(name = "id") private Long id;
+    @Version @Column(name = "version", nullable = false) private Long version;
     @Column(name = "code", nullable = false, unique = true, length = 50) private String code;
     @Column(name = "name", nullable = false, length = 100) private String name;
     @Enumerated(EnumType.STRING) @Column(name = "calculation_type", nullable = false, length = 30) private CalculationType calculationType;
     @Column(name = "active", nullable = false) private Boolean active = true;
     public ExpenseType() {}
     public Long getId() { return id; }
+    public Long getVersion() { return version; }
     public String getCode() { return code; } public void setCode(String v) { code = v; }
     public String getName() { return name; } public void setName(String v) { name = v; }
     public CalculationType getCalculationType() { return calculationType; } public void setCalculationType(CalculationType v) { calculationType = v; }
