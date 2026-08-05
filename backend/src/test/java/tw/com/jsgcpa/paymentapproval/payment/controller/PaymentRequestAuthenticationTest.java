@@ -771,6 +771,60 @@ class PaymentRequestAuthenticationTest {
     }
 
     @Test
+    void masterDataAdminDoesNotHaveCashierOrPaymentOperatorAuthority()
+            throws Exception {
+        AuthenticatedUserPrincipal masterDataAdmin =
+                principalWithAuthorities(7L, "MASTER_DATA_ADMIN");
+
+        mockMvc.perform(post("/api/payment-requests/5/cashier-reject")
+                        .with(user(masterDataAdmin))
+                        .with(csrf())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"version\":2}"))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.code").value("ACCESS_DENIED"));
+
+        mockMvc.perform(post("/api/payment-requests/5/record-payment")
+                        .with(user(masterDataAdmin))
+                        .with(csrf())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"version\":3,"+
+                                "\"paidAt\":\"2026-07-31T13:30:00+08:00\"}"))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.code").value("ACCESS_DENIED"));
+
+        verify(cashierReviewPaymentService, never())
+                .reject(any(Long.class), any(Long.class),
+                        any(CashierReviewPaymentRequest.class));
+        verify(recordPaymentService, never()).recordPayment(
+                any(Long.class), any(Long.class), any(RecordPaymentRequest.class));
+    }
+
+    @Test
+    void masterDataAdminDoesNotBypassManagerBusinessAuthorization()
+            throws Exception {
+        when(managerReviewPaymentService.approve(5L, 7L, 0L, null))
+                .thenThrow(new tw.com.jsgcpa.paymentapproval.payment.exception.PaymentDraftBusinessException(
+                        "PAYMENT_REQUEST_MANAGER_FORBIDDEN",
+                        "manager authorization required"
+                ));
+
+        mockMvc.perform(post("/api/payment-requests/5/manager-approve")
+                        .with(user(principalWithAuthorities(
+                                7L,
+                                "MASTER_DATA_ADMIN"
+                        )))
+                        .with(csrf())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"version\":0}"))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.code")
+                        .value("PAYMENT_REQUEST_MANAGER_FORBIDDEN"));
+
+        verify(managerReviewPaymentService).approve(5L, 7L, 0L, null);
+    }
+
+    @Test
     void authenticatedPaymentOperatorUsesPrincipalUserId() throws Exception {
         RecordPaymentRequest request = new RecordPaymentRequest(
                 3L,

@@ -106,6 +106,25 @@ class AuthenticationServiceTest {
     }
 
     @Test
+    void mapsMasterDataAdminRoleWithoutAddingOtherRoles() {
+        AuthenticatedUserPrincipal principal = principal(List.of(
+                new SimpleGrantedAuthority("MASTER_DATA_ADMIN")
+        ));
+
+        AuthenticatedUserResponse response = service.toResponse(principal);
+
+        assertEquals(
+                List.of(SecurityRole.MASTER_DATA_ADMIN),
+                response.roles()
+        );
+        assertEquals(
+                "MASTER_DATA_ADMIN",
+                SecurityRole.MASTER_DATA_ADMIN.name()
+        );
+        assertEquals(4, response.getClass().getRecordComponents().length);
+    }
+
+    @Test
     void mapsNoRoleUserToEmptyRoles() {
         AuthenticatedUserResponse response = service.toResponse(principal(List.of()));
 
