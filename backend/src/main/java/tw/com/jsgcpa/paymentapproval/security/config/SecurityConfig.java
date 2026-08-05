@@ -91,6 +91,8 @@ public class SecurityConfig {
                 .authorizeHttpRequests(authorize -> authorize
                         .requestMatchers("/api/auth/login").permitAll()
                         .requestMatchers("/api/auth/csrf").permitAll()
+                        .requestMatchers("/api/admin/master/**")
+                        .hasAuthority("MASTER_DATA_ADMIN")
                         .requestMatchers(
                                 "/api/auth/me",
                                 "/api/auth/logout"
