@@ -9,6 +9,7 @@ import tw.com.jsgcpa.paymentapproval.common.entity.BaseTimeEntity;
 @Table(name = "expense_price_settings")
 public class ExpensePriceSetting extends BaseTimeEntity {
     @Id @GeneratedValue(strategy = GenerationType.IDENTITY) @Column(name = "id") private Long id;
+    @Version @Column(name = "version", nullable = false) private Long version;
     @ManyToOne(fetch = FetchType.LAZY, optional = false) @JoinColumn(name = "expense_type_id", nullable = false) private ExpenseType expenseType;
     @Column(name = "price_code", nullable = false, length = 50) private String priceCode = "DEFAULT";
     @Column(name = "price_name", nullable = false, length = 100) private String priceName;
@@ -18,6 +19,7 @@ public class ExpensePriceSetting extends BaseTimeEntity {
     @Column(name = "active", nullable = false) private Boolean active = true;
     public ExpensePriceSetting() {}
     public Long getId() { return id; }
+    public Long getVersion() { return version; }
     public ExpenseType getExpenseType() { return expenseType; } public void setExpenseType(ExpenseType v) { expenseType = v; }
     public String getPriceCode() { return priceCode; } public void setPriceCode(String v) { priceCode = v; }
     public String getPriceName() { return priceName; } public void setPriceName(String v) { priceName = v; }
