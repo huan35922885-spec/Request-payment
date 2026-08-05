@@ -59,6 +59,84 @@ class ExpensePricePeriodExclusionConstraintTest {
     }
 
     @Test
+    void rejectsPeriodFullyContainedByExistingPeriod() {
+        withV8Schema(schema -> {
+            long expenseTypeId = schema.insertExpenseType("CONTAINING");
+            schema.insertPrice(
+                    expenseTypeId,
+                    "DEFAULT",
+                    AUGUST_FIRST,
+                    LocalDate.of(2026, 12, 31),
+                    true
+            );
+
+            assertSqlState(
+                    "23P01",
+                    () -> schema.insertPrice(
+                            expenseTypeId,
+                            "DEFAULT",
+                            SEPTEMBER_FIRST,
+                            SEPTEMBER_THIRTIETH,
+                            true
+                    )
+            );
+            assertEquals(1, schema.countPrices(expenseTypeId));
+        });
+    }
+
+    @Test
+    void rejectsPeriodThatFullyContainsExistingPeriod() {
+        withV8Schema(schema -> {
+            long expenseTypeId = schema.insertExpenseType("CONTAINED");
+            schema.insertPrice(
+                    expenseTypeId,
+                    "DEFAULT",
+                    SEPTEMBER_FIRST,
+                    SEPTEMBER_THIRTIETH,
+                    true
+            );
+
+            assertSqlState(
+                    "23P01",
+                    () -> schema.insertPrice(
+                            expenseTypeId,
+                            "DEFAULT",
+                            AUGUST_FIRST,
+                            LocalDate.of(2026, 12, 31),
+                            true
+                    )
+            );
+            assertEquals(1, schema.countPrices(expenseTypeId));
+        });
+    }
+
+    @Test
+    void rejectsSameDayInclusiveBoundaryOverlap() {
+        withV8Schema(schema -> {
+            long expenseTypeId = schema.insertExpenseType("INCLUSIVE_BOUNDARY");
+            schema.insertPrice(
+                    expenseTypeId,
+                    "DEFAULT",
+                    AUGUST_FIRST,
+                    SEPTEMBER_FIRST,
+                    true
+            );
+
+            assertSqlState(
+                    "23P01",
+                    () -> schema.insertPrice(
+                            expenseTypeId,
+                            "DEFAULT",
+                            SEPTEMBER_FIRST,
+                            null,
+                            true
+                    )
+            );
+            assertEquals(1, schema.countPrices(expenseTypeId));
+        });
+    }
+
+    @Test
     void allowsAdjacentPeriodsForSameExpenseTypeAndPriceCode() {
         withV8Schema(schema -> {
             long expenseTypeId = schema.insertExpenseType("ADJACENT");
@@ -146,6 +224,29 @@ class ExpensePricePeriodExclusionConstraintTest {
                     AUGUST_FIRST,
                     SEPTEMBER_THIRTIETH,
                     true
+            );
+
+            assertEquals(2, schema.countPrices(expenseTypeId));
+        });
+    }
+
+    @Test
+    void allowsTwoOverlappingInactivePeriods() {
+        withV8Schema(schema -> {
+            long expenseTypeId = schema.insertExpenseType("TWO_INACTIVE");
+            schema.insertPrice(
+                    expenseTypeId,
+                    "DEFAULT",
+                    AUGUST_FIRST,
+                    SEPTEMBER_THIRTIETH,
+                    false
+            );
+            schema.insertPrice(
+                    expenseTypeId,
+                    "DEFAULT",
+                    AUGUST_FIRST,
+                    SEPTEMBER_THIRTIETH,
+                    false
             );
 
             assertEquals(2, schema.countPrices(expenseTypeId));
@@ -242,7 +343,6 @@ class ExpensePricePeriodExclusionConstraintTest {
         String schemaName = "expense_period_constraint_"
                 + UUID.randomUUID().toString().replace("-", "");
         SchemaContext schema = new SchemaContext(schemaName);
-        boolean extensionExistedBefore = schema.btreeGistInstalled();
 
         try {
             publicJdbcTemplate.execute("CREATE SCHEMA " + quoteIdentifier(schemaName));
@@ -252,9 +352,6 @@ class ExpensePricePeriodExclusionConstraintTest {
             publicJdbcTemplate.execute(
                     "DROP SCHEMA IF EXISTS " + quoteIdentifier(schemaName) + " CASCADE"
             );
-            if (!extensionExistedBefore && schema.btreeGistInstalled()) {
-                publicJdbcTemplate.execute("DROP EXTENSION IF EXISTS btree_gist");
-            }
         }
     }
 
@@ -348,11 +445,5 @@ class ExpensePricePeriodExclusionConstraintTest {
             );
         }
 
-        private boolean btreeGistInstalled() {
-            return publicJdbcTemplate.queryForObject(
-                    "SELECT COUNT(*) FROM pg_extension WHERE extname = 'btree_gist'",
-                    Integer.class
-            ) > 0;
-        }
     }
 }

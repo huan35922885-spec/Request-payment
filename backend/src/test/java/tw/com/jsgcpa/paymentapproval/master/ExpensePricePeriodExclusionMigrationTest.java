@@ -4,6 +4,8 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import java.math.BigDecimal;
+import java.time.LocalDate;
 import java.util.Map;
 import java.util.UUID;
 import javax.sql.DataSource;
@@ -28,7 +30,6 @@ class ExpensePricePeriodExclusionMigrationTest {
         String schemaName = "expense_period_migration_"
                 + UUID.randomUUID().toString().replace("-", "");
         SchemaContext schema = new SchemaContext(schemaName);
-        boolean extensionExistedBefore = schema.btreeGistInstalled();
 
         try {
             publicJdbcTemplate.execute("CREATE SCHEMA " + quoteIdentifier(schemaName));
@@ -65,15 +66,22 @@ class ExpensePricePeriodExclusionMigrationTest {
             assertEquals(priceSettingCount, schema.countAll("expense_price_settings"));
             assertEquals(0, schema.count("expense_types", "version <> 0"));
             assertEquals(0, schema.count("expense_price_settings", "version <> 0"));
-            assertEquals(1, schema.count("expense_types", "code = 'MEAL'"));
-            assertEquals(1, schema.count("expense_types", "code = 'CONFIRMATION'"));
+            schema.assertSeedPrice("MEAL", "DEFAULT", new BigDecimal("80.00"));
+            schema.assertSeedPrice("CONFIRMATION", "NORMAL_MAIL", new BigDecimal("8.00"));
+            schema.assertSeedPrice(
+                    "CONFIRMATION",
+                    "REGISTERED_MAIL",
+                    new BigDecimal("28.00")
+            );
+            schema.assertSeedPrice(
+                    "CONFIRMATION",
+                    "EXPRESS_REGISTERED_MAIL",
+                    new BigDecimal("35.00")
+            );
         } finally {
             publicJdbcTemplate.execute(
                     "DROP SCHEMA IF EXISTS " + quoteIdentifier(schemaName) + " CASCADE"
             );
-            if (!extensionExistedBefore && schema.btreeGistInstalled()) {
-                publicJdbcTemplate.execute("DROP EXTENSION IF EXISTS btree_gist");
-            }
         }
     }
 
@@ -162,13 +170,6 @@ class ExpensePricePeriodExclusionMigrationTest {
             );
         }
 
-        private boolean btreeGistInstalled() {
-            return publicJdbcTemplate.queryForObject(
-                    "SELECT COUNT(*) FROM pg_extension WHERE extname = 'btree_gist'",
-                    Integer.class
-            ) > 0;
-        }
-
         private int btreeGistPublicSchemaCount() {
             return publicJdbcTemplate.queryForObject(
                     "SELECT COUNT(*) "
@@ -177,6 +178,38 @@ class ExpensePricePeriodExclusionMigrationTest {
                             + "WHERE e.extname = 'btree_gist' AND n.nspname = 'public'",
                     Integer.class
             );
+        }
+
+        private boolean btreeGistInstalled() {
+            return publicJdbcTemplate.queryForObject(
+                    "SELECT COUNT(*) FROM pg_extension WHERE extname = 'btree_gist'",
+                    Integer.class
+            ) > 0;
+        }
+
+        private void assertSeedPrice(
+                String expenseTypeCode,
+                String priceCode,
+                BigDecimal expectedUnitPrice
+        ) {
+            Map<String, Object> price = jdbc.queryForMap(
+                    "SELECT eps.unit_price, eps.effective_from, eps.effective_to, "
+                            + "eps.active, eps.version "
+                            + "FROM " + table("expense_price_settings") + " eps "
+                            + "JOIN " + table("expense_types") + " et "
+                            + "ON et.id = eps.expense_type_id "
+                            + "WHERE et.code = ? AND eps.price_code = ?",
+                    expenseTypeCode,
+                    priceCode
+            );
+            assertEquals(expectedUnitPrice, price.get("unit_price"));
+            assertEquals(
+                    LocalDate.of(2026, 8, 4),
+                    ((java.sql.Date) price.get("effective_from")).toLocalDate()
+            );
+            assertEquals(null, price.get("effective_to"));
+            assertEquals(true, price.get("active"));
+            assertEquals(0L, ((Number) price.get("version")).longValue());
         }
     }
 }

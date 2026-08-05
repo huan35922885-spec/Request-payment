@@ -41,7 +41,6 @@ class ExpensePricePeriodExclusionConcurrencyTest {
         String schemaName = "expense_period_concurrency_"
                 + UUID.randomUUID().toString().replace("-", "");
         String schema = quoteIdentifier(schemaName);
-        boolean extensionExistedBefore = btreeGistInstalled();
         ExecutorService executor = Executors.newFixedThreadPool(2);
         CountDownLatch firstInsertCompleted = new CountDownLatch(1);
         CountDownLatch secondInsertStarted = new CountDownLatch(1);
@@ -134,9 +133,6 @@ class ExpensePricePeriodExclusionConcurrencyTest {
             executor.shutdownNow();
             executor.awaitTermination(COORDINATION_TIMEOUT_SECONDS, TimeUnit.SECONDS);
             publicJdbcTemplate.execute("DROP SCHEMA IF EXISTS " + schema + " CASCADE");
-            if (!extensionExistedBefore && btreeGistInstalled()) {
-                publicJdbcTemplate.execute("DROP EXTENSION IF EXISTS btree_gist");
-            }
         }
     }
 
@@ -214,13 +210,6 @@ class ExpensePricePeriodExclusionConcurrencyTest {
                 .target(MigrationVersion.fromVersion("8"))
                 .load()
                 .migrate();
-    }
-
-    private boolean btreeGistInstalled() {
-        return publicJdbcTemplate.queryForObject(
-                "SELECT COUNT(*) FROM pg_extension WHERE extname = 'btree_gist'",
-                Integer.class
-        ) > 0;
     }
 
     private void rollback(Connection connection, Exception failure) {
