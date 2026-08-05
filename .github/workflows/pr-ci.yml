@@ -71,11 +71,10 @@ jobs:
             -U payment_user \
             -d payment_approval \
             -v ON_ERROR_STOP=1 \
-            -c "INSERT INTO expense_types (id, code, name, calculation_type, active)
-                VALUES (1, 'CI_FIXTURE', 'CI fixture expense', 'MANUAL', TRUE)
-                ON CONFLICT (id) DO UPDATE
-                SET code = EXCLUDED.code,
-                    name = EXCLUDED.name,
+            -c "INSERT INTO expense_types (code, name, calculation_type, active)
+                VALUES ('CI_FIXTURE', 'CI fixture expense', 'MANUAL', TRUE)
+                ON CONFLICT (code) DO UPDATE
+                SET name = EXCLUDED.name,
                     calculation_type = EXCLUDED.calculation_type,
                     active = EXCLUDED.active;"
 
