@@ -14,6 +14,7 @@ import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
+import org.springframework.web.bind.MissingServletRequestParameterException;
 import org.springframework.web.multipart.MaxUploadSizeExceededException;
 import tw.com.jsgcpa.paymentapproval.common.api.ApiErrorResponse;
 import tw.com.jsgcpa.paymentapproval.common.api.FieldValidationError;
@@ -82,6 +83,20 @@ public class GlobalExceptionHandler {
                         ? "PAYMENT_REQUEST_ATTACHMENT_TYPE_INVALID"
                         : "INVALID_QUERY_PARAMETER",
                 "Query parameter is invalid",
+                request,
+                List.of()
+        );
+    }
+
+    @ExceptionHandler(MissingServletRequestParameterException.class)
+    public ResponseEntity<ApiErrorResponse> handleMissingQueryParameter(
+            MissingServletRequestParameterException exception,
+            HttpServletRequest request
+    ) {
+        return errorResponse(
+                HttpStatus.BAD_REQUEST,
+                "INVALID_QUERY_PARAMETER",
+                "Query parameter is required",
                 request,
                 List.of()
         );
@@ -213,9 +228,11 @@ public class GlobalExceptionHandler {
             ExpenseTypeAdminBusinessException exception,
             HttpServletRequest request
     ) {
-        HttpStatus status = "EXPENSE_TYPE_NOT_FOUND".equals(exception.getCode())
-                ? HttpStatus.NOT_FOUND
-                : HttpStatus.CONFLICT;
+        HttpStatus status = switch (exception.getCode()) {
+            case "EXPENSE_TYPE_NOT_FOUND",
+                    "EXPENSE_PRICE_SETTING_NOT_FOUND" -> HttpStatus.NOT_FOUND;
+            default -> HttpStatus.CONFLICT;
+        };
         return errorResponse(
                 status,
                 exception.getCode(),
@@ -292,6 +309,7 @@ public class GlobalExceptionHandler {
                     "CUSTOMER_NOT_FOUND",
                     "EXPENSE_TYPE_NOT_FOUND",
                     "PRICE_SETTING_NOT_FOUND",
+                    "EXPENSE_PRICE_SETTING_NOT_FOUND",
                     "CASHIER_NOT_FOUND",
                     "PAID_BY_NOT_FOUND",
                     "PAYMENT_REQUEST_NOT_FOUND" -> true;
