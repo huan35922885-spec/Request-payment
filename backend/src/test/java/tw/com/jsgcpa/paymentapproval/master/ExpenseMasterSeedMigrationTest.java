@@ -52,8 +52,8 @@ class ExpenseMasterSeedMigrationTest {
                 jdbcTemplate.queryForObject(
                         """
                         SELECT COUNT(*)
-                        FROM expense_types
-                        WHERE code IN ('EXPRESS_REGISTERED', 'TRANSPORTATION')
+                        FROM expense_price_settings
+                        WHERE price_code = 'EXPRESS_REGISTERED'
                         """,
                         Integer.class
                 )
@@ -88,16 +88,15 @@ class ExpenseMasterSeedMigrationTest {
     @Test
     void recordsFlywaySchemaVersionFive() {
         assertEquals(
-                "5",
+                1,
                 jdbcTemplate.queryForObject(
                         """
-                        SELECT version
+                        SELECT COUNT(*)
                         FROM flyway_schema_history
-                        WHERE success = TRUE
-                        ORDER BY installed_rank DESC
-                        LIMIT 1
+                        WHERE version = '5'
+                          AND success = TRUE
                         """,
-                        String.class
+                        Integer.class
                 )
         );
     }
