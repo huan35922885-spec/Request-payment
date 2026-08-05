@@ -86,11 +86,25 @@ class ExpenseMasterOptimisticLockingJpaTest {
         );
 
         assertEquals(1L, updated.getVersion());
+        updated.setName("Updated twice");
+        ExpenseType updatedAgain = inNewTransaction(
+                () -> expenseTypeRepository.saveAndFlush(updated)
+        );
+
+        assertEquals(2L, updatedAgain.getVersion());
         assertEquals(
-                1L,
+                2L,
                 jdbcTemplate.queryForObject(
                         "SELECT version FROM expense_types WHERE id = ?",
                         Long.class,
+                        expenseTypeId
+                )
+        );
+        assertEquals(
+                "Updated twice",
+                jdbcTemplate.queryForObject(
+                        "SELECT name FROM expense_types WHERE id = ?",
+                        String.class,
                         expenseTypeId
                 )
         );
@@ -141,11 +155,25 @@ class ExpenseMasterOptimisticLockingJpaTest {
         );
 
         assertEquals(1L, updated.getVersion());
+        updated.setPriceName("Updated price twice");
+        ExpensePriceSetting updatedAgain = inNewTransaction(
+                () -> expensePriceSettingRepository.saveAndFlush(updated)
+        );
+
+        assertEquals(2L, updatedAgain.getVersion());
         assertEquals(
-                1L,
+                2L,
                 jdbcTemplate.queryForObject(
                         "SELECT version FROM expense_price_settings WHERE id = ?",
                         Long.class,
+                        priceSettingId
+                )
+        );
+        assertEquals(
+                "Updated price twice",
+                jdbcTemplate.queryForObject(
+                        "SELECT price_name FROM expense_price_settings WHERE id = ?",
+                        String.class,
                         priceSettingId
                 )
         );

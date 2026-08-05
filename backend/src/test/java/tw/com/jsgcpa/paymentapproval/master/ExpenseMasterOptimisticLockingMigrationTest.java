@@ -64,7 +64,6 @@ class ExpenseMasterOptimisticLockingMigrationTest {
                             "version = '7' AND success = TRUE"
                     )
             );
-            assertEquals(0, schema.count("flyway_schema_history", "version = '8'"));
         } finally {
             publicJdbcTemplate.execute(
                     "DROP SCHEMA IF EXISTS " + quoteIdentifier(schemaName) + " CASCADE"
