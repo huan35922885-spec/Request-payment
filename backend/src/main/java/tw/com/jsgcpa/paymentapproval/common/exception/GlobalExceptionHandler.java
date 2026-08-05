@@ -23,6 +23,7 @@ import tw.com.jsgcpa.paymentapproval.attachment.exception.PaymentRequestAttachme
 import tw.com.jsgcpa.paymentapproval.attachment.exception.PaymentRequestAttachmentNotFoundException;
 import tw.com.jsgcpa.paymentapproval.attachment.exception.PaymentRequestAttachmentDeleteException;
 import tw.com.jsgcpa.paymentapproval.payment.exception.PaymentDraftBusinessException;
+import tw.com.jsgcpa.paymentapproval.master.admin.exception.ExpenseTypeAdminBusinessException;
 import tw.com.jsgcpa.paymentapproval.security.exception.AuthenticationBusinessException;
 
 @RestControllerAdvice
@@ -198,6 +199,23 @@ public class GlobalExceptionHandler {
             HttpServletRequest request
     ) {
         HttpStatus status = resolveBusinessStatus(exception.getCode());
+        return errorResponse(
+                status,
+                exception.getCode(),
+                exception.getMessage(),
+                request,
+                List.of()
+        );
+    }
+
+    @ExceptionHandler(ExpenseTypeAdminBusinessException.class)
+    public ResponseEntity<ApiErrorResponse> handleExpenseTypeAdminBusinessException(
+            ExpenseTypeAdminBusinessException exception,
+            HttpServletRequest request
+    ) {
+        HttpStatus status = "EXPENSE_TYPE_NOT_FOUND".equals(exception.getCode())
+                ? HttpStatus.NOT_FOUND
+                : HttpStatus.CONFLICT;
         return errorResponse(
                 status,
                 exception.getCode(),

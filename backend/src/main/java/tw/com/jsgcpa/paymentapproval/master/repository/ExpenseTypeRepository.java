@@ -6,5 +6,9 @@ import tw.com.jsgcpa.paymentapproval.master.entity.ExpenseType;
 
 public interface ExpenseTypeRepository extends JpaRepository<ExpenseType, Long> {
 
+    List<ExpenseType> findAllByOrderByCodeAscIdAsc();
+
+    boolean existsByCode(String code);
+
     List<ExpenseType> findByActiveTrueOrderByCodeAscIdAsc();
 }

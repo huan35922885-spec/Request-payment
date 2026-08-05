@@ -14,6 +14,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.http.MediaType;
+import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.test.web.servlet.MockMvc;
 
@@ -50,6 +51,65 @@ class SecurityConfigTest {
         mockMvc.perform(get("/api/master/expense-types/1/prices"))
                 .andExpect(status().isUnauthorized())
                 .andExpect(jsonPath("$.code").value("UNAUTHENTICATED"));
+    }
+
+    @Test
+    void expenseTypeAdminGetRequiresMasterDataAdmin() throws Exception {
+        mockMvc.perform(get("/api/admin/master/expense-types"))
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.code").value("UNAUTHENTICATED"));
+
+        mockMvc.perform(get("/api/admin/master/expense-types")
+                        .with(user("applicant")))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.code").value("ACCESS_DENIED"));
+
+        mockMvc.perform(get("/api/admin/master/expense-types")
+                        .with(user("cashier")
+                                .authorities(new SimpleGrantedAuthority("CASHIER"))))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.code").value("ACCESS_DENIED"));
+
+        mockMvc.perform(get("/api/admin/master/expense-types")
+                        .with(user("payment-operator")
+                                .authorities(new SimpleGrantedAuthority("PAYMENT_OPERATOR"))))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.code").value("ACCESS_DENIED"));
+
+        mockMvc.perform(get("/api/admin/master/expense-types")
+                        .with(user("master-admin")
+                                .authorities(new SimpleGrantedAuthority("MASTER_DATA_ADMIN"))))
+                .andExpect(status().isOk());
+    }
+
+    @Test
+    void expenseTypeAdminWriteRequiresMasterDataAdminAndCsrf() throws Exception {
+        String body = "{\"code\":\"E2E_TEST\",\"name\":\"Test\",\"calculationType\":\"MANUAL\"}";
+
+        mockMvc.perform(post("/api/admin/master/expense-types")
+                        .with(user("master-admin"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(body))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.code").value("INVALID_CSRF_TOKEN"));
+
+        mockMvc.perform(post("/api/admin/master/expense-types")
+                        .with(user("applicant")
+                                .authorities(new SimpleGrantedAuthority("APPLICANT")))
+                        .with(csrf())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(body))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.code").value("ACCESS_DENIED"));
+
+        mockMvc.perform(post("/api/admin/master/expense-types")
+                        .with(user("master-admin")
+                                .authorities(new SimpleGrantedAuthority("MASTER_DATA_ADMIN")))
+                        .with(csrf())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("VALIDATION_FAILED"));
     }
 
     @Test
