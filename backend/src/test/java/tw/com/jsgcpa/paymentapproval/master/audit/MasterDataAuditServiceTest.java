@@ -1,6 +1,7 @@
 package tw.com.jsgcpa.paymentapproval.master.audit;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.verify;
@@ -75,7 +76,7 @@ class MasterDataAuditServiceTest {
     }
 
     @Test
-    void commandTrimsReasonAndCopiesSnapshotMaps() {
+    void commandStripsReasonAndCopiesSnapshotMaps() {
         Map<String, Object> after = new LinkedHashMap<>();
         after.put("name", "Meal");
         MasterDataAuditRecordCommand command = new MasterDataAuditRecordCommand(
@@ -88,7 +89,7 @@ class MasterDataAuditServiceTest {
                 after,
                 0L,
                 1L,
-                "  no longer used  "
+                "\u2003no longer used\u2003"
         );
 
         after.put("mutated", true);
@@ -100,7 +101,7 @@ class MasterDataAuditServiceTest {
     }
 
     @Test
-    void rejectsInvalidCommandShapesAndRequiredReasons() {
+    void rejectsInvalidCommandShapes() {
         assertThrows(IllegalArgumentException.class, () -> new MasterDataAuditRecordCommand(
                 UUID.randomUUID(),
                 MasterDataAuditTargetType.EXPENSE_TYPE,
@@ -112,18 +113,6 @@ class MasterDataAuditServiceTest {
                 0L,
                 0L,
                 null
-        ));
-        assertThrows(IllegalArgumentException.class, () -> new MasterDataAuditRecordCommand(
-                UUID.randomUUID(),
-                MasterDataAuditTargetType.EXPENSE_TYPE,
-                10L,
-                MasterDataAuditAction.EXPENSE_TYPE_DEACTIVATE,
-                7L,
-                Map.of(),
-                Map.of(),
-                0L,
-                1L,
-                "  "
         ));
         assertThrows(IllegalArgumentException.class, () -> new MasterDataAuditRecordCommand(
                 UUID.randomUUID(),
@@ -136,6 +125,95 @@ class MasterDataAuditServiceTest {
                 1L,
                 0L,
                 null
+        ));
+    }
+
+    @Test
+    void allowsNullReasonForExpenseTypeDeactivation() {
+        MasterDataAuditRecordCommand command = new MasterDataAuditRecordCommand(
+                UUID.randomUUID(),
+                MasterDataAuditTargetType.EXPENSE_TYPE,
+                10L,
+                MasterDataAuditAction.EXPENSE_TYPE_DEACTIVATE,
+                7L,
+                Map.of("active", true),
+                Map.of("active", false),
+                0L,
+                1L,
+                null
+        );
+
+        assertNull(command.reason());
+    }
+
+    @Test
+    void allowsNullReasonForExpensePriceReplacementWithBothValidShapes() {
+        MasterDataAuditRecordCommand updateCommand = new MasterDataAuditRecordCommand(
+                UUID.randomUUID(),
+                MasterDataAuditTargetType.EXPENSE_PRICE_SETTING,
+                10L,
+                MasterDataAuditAction.EXPENSE_PRICE_REPLACE,
+                7L,
+                Map.of("unitPrice", 10),
+                Map.of("unitPrice", 12),
+                0L,
+                1L,
+                null
+        );
+        MasterDataAuditRecordCommand createCommand = new MasterDataAuditRecordCommand(
+                UUID.randomUUID(),
+                MasterDataAuditTargetType.EXPENSE_PRICE_SETTING,
+                11L,
+                MasterDataAuditAction.EXPENSE_PRICE_REPLACE,
+                7L,
+                null,
+                Map.of("unitPrice", 12),
+                null,
+                0L,
+                null
+        );
+
+        assertNull(updateCommand.reason());
+        assertNull(createCommand.reason());
+    }
+
+    @Test
+    void rejectsBlankReasonForEveryAction() {
+        assertThrows(IllegalArgumentException.class, () -> new MasterDataAuditRecordCommand(
+                UUID.randomUUID(),
+                MasterDataAuditTargetType.EXPENSE_TYPE,
+                10L,
+                MasterDataAuditAction.EXPENSE_TYPE_CREATE,
+                7L,
+                null,
+                Map.of("code", "MEAL"),
+                null,
+                0L,
+                ""
+        ));
+        assertThrows(IllegalArgumentException.class, () -> new MasterDataAuditRecordCommand(
+                UUID.randomUUID(),
+                MasterDataAuditTargetType.EXPENSE_TYPE,
+                10L,
+                MasterDataAuditAction.EXPENSE_TYPE_DEACTIVATE,
+                7L,
+                Map.of("active", true),
+                Map.of("active", false),
+                0L,
+                1L,
+                "   "
+        ));
+        assertThrows(IllegalArgumentException.class, () -> new MasterDataAuditRecordCommand(
+                UUID.randomUUID(),
+                MasterDataAuditTargetType.EXPENSE_PRICE_SETTING,
+                10L,
+                MasterDataAuditAction.EXPENSE_PRICE_REPLACE,
+                7L,
+                null,
+                Map.of("unitPrice", 12),
+                null,
+                0L,
+                "\t "
         ));
     }
 

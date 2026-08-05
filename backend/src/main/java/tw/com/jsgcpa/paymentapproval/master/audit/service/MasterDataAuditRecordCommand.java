@@ -48,22 +48,21 @@ public record MasterDataAuditRecordCommand(
         }
 
         reason = normalizeReason(reason);
-        validateReasonRequirement(action, reason);
         validateSnapshotShape(action, beforeData, beforeVersion, afterVersion);
         beforeData = immutableCopy(beforeData);
         afterData = immutableCopy(afterData);
     }
 
     private static String normalizeReason(String value) {
-        return value == null ? null : value.trim();
-    }
-
-    private static void validateReasonRequirement(MasterDataAuditAction action, String reason) {
-        if ((action == MasterDataAuditAction.EXPENSE_TYPE_DEACTIVATE
-                || action == MasterDataAuditAction.EXPENSE_PRICE_REPLACE)
-                && (reason == null || reason.isEmpty())) {
-            throw new IllegalArgumentException("reason is required for " + action);
+        if (value == null) {
+            return null;
         }
+
+        String normalized = value.strip();
+        if (normalized.isEmpty()) {
+            throw new IllegalArgumentException("reason must not be blank");
+        }
+        return normalized;
     }
 
     private static void validateSnapshotShape(
