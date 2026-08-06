@@ -737,14 +737,6 @@ class PaymentRequestControllerTest {
 
     @Test
     void multipartRecordPaymentReturns200() throws Exception {
-        /*
-        when(legacyRecordPaymentService.recordPayment(
-                5L,
-                1L,
-                recordRequest(3L, PAYMENT_PAID_AT, PaymentMethod.BANK_TRANSFER,
-                        "E2E-TRANSFER-001", "已完成銀行轉帳")
-        )).thenReturn(recordPaymentResponse());
-        */
         when(recordPaymentService.recordPayment(
                 eq(5L),
                 any(RecordPaymentRequest.class),
@@ -790,14 +782,6 @@ class PaymentRequestControllerTest {
                 .andExpect(MockMvcResultMatchers.jsonPath("$.version")
                         .value(4));
 
-        /*
-        verify(recordPaymentService, times(1)).recordPayment(
-                5L,
-                1L,
-                recordRequest(3L, PAYMENT_PAID_AT, PaymentMethod.BANK_TRANSFER,
-                        "E2E-TRANSFER-001", "已完成銀行轉帳")
-        );
-        */
         ArgumentCaptor<RecordPaymentRequest> requestCaptor =
                 ArgumentCaptor.forClass(RecordPaymentRequest.class);
         ArgumentCaptor<MultipartFile> fileCaptor =
@@ -921,26 +905,7 @@ class PaymentRequestControllerTest {
     }
 
     @Test
-    void acceptsNullOptionalPaymentFields() throws Exception {
-        /*
-        when(legacyRecordPaymentService.recordPayment(
-                5L, 1L, recordRequest(3L, PAYMENT_PAID_AT, null, null, null)
-        )).thenReturn(new RecordPaymentResponse(
-                5L,
-                "PAY-20260731-000005",
-                ApprovalAction.PAYMENT_RECORDED,
-                ApprovalStatus.APPROVED,
-                PaymentStatus.PAID,
-                6L,
-                "E2E 測試出納",
-                RESPONSE_PAID_AT,
-                null,
-                null,
-                null,
-                OffsetDateTime.parse("2026-07-31T14:00:00+08:00"),
-                4L
-        ));
-        */
+    void multipartAcceptsNullOptionalPaymentFields() throws Exception {
         when(recordPaymentService.recordPayment(
                 eq(5L),
                 any(RecordPaymentRequest.class),
@@ -953,7 +918,7 @@ class PaymentRequestControllerTest {
                 ApprovalStatus.APPROVED,
                 PaymentStatus.PAID,
                 6L,
-                "E2E 皜祈岫?箇?",
+                "E2E 測試出納",
                 RESPONSE_PAID_AT,
                 null,
                 null,
@@ -979,11 +944,6 @@ class PaymentRequestControllerTest {
                 .andExpect(MockMvcResultMatchers.jsonPath("$.paymentNote")
                         .doesNotExist());
 
-        /*
-        verify(recordPaymentService).recordPayment(
-                5L, 1L, recordRequest(3L, PAYMENT_PAID_AT, null, null, null)
-        );
-        */
         verify(recordPaymentService).recordPayment(
                 eq(5L), any(RecordPaymentRequest.class), any(MultipartFile.class), eq(1L)
         );
@@ -1252,15 +1212,6 @@ class PaymentRequestControllerTest {
 
     @Test
     void hidesRecordPaymentUnexpectedExceptionDetails() throws Exception {
-        /*
-        when(legacyRecordPaymentService.recordPayment(
-                5L, 1L,
-                recordRequest(3L, PAYMENT_PAID_AT, PaymentMethod.BANK_TRANSFER,
-                        "E2E-TRANSFER-001", "已完成銀行轉帳")
-        )).thenThrow(new RuntimeException(
-                "sensitive payment database details"
-        ));
-        */
         when(recordPaymentService.recordPayment(
                 eq(5L),
                 any(RecordPaymentRequest.class),
@@ -2381,22 +2332,6 @@ class PaymentRequestControllerTest {
             String code,
             String message
     ) {
-        /*
-        when(legacyRecordPaymentService.recordPayment(
-                eq(5L),
-                any(RecordPaymentRequest.class),
-                any(MultipartFile.class),
-                eq(1L)
-        )).thenThrow(new PaymentDraftBusinessException(code, message));
-        */
-        /*
-        when(legacyRecordPaymentService.recordPayment(
-                5L,
-                1L,
-                recordRequest(3L, PAYMENT_PAID_AT, PaymentMethod.BANK_TRANSFER,
-                        "E2E-TRANSFER-001", "已完成銀行轉帳")
-        )).thenThrow(new PaymentDraftBusinessException(code, message));
-        */
         when(recordPaymentService.recordPayment(
                 eq(5L),
                 any(RecordPaymentRequest.class),
