@@ -1,5 +1,7 @@
 # 請款簽核系統 Authentication／Authorization 安全基線
 
+> **Superseded（角色與付款授權）：** 自 Excel 同步起，簽核／付款權限僅 `CASHIER`（廢止 `PAYMENT_OPERATOR`）；契約見 [`excel-sync-roadmap.md`](excel-sync-roadmap.md) 與 V10 migration。下文若仍出現 `PAYMENT_OPERATOR`，視為歷史敘述。
+
 ## 1. 文件目的與適用範圍
 
 本文件整理目前請款簽核系統的 Authentication、Authorization、Session、CSRF、Principal、HTTP 錯誤語意，以及前後端安全邊界。內容以目前 Java、Vue、V4 Migration、既有測試與 PostgreSQL／瀏覽器驗收結果為準。

@@ -1,5 +1,7 @@
 # 請款簽核系統欄位名稱盤點與對齊報告
 
+> **Superseded（產品契約）：** 欄位中文用語、`APPROVED=核准結案`、出納＝`CASHIER`、付款證明 B1 以 [`excel-sync-roadmap.md`](excel-sync-roadmap.md) 與 `請款流程_已完成開發規則.xlsx` 為準。本文件保留 2026-08-03 盤點歷史；其中「已核准」「PAYMENT_OPERATOR」等建議已覆寫。
+
 盤點日期：2026-08-03
 
 本文件只做欄位盤點、名稱對照與規格差異記錄。本階段沒有修改 Java、Vue、Migration、Database 或 API Contract，也沒有執行案件 14、20 的付款寫入 E2E。

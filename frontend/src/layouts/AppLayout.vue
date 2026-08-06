@@ -88,7 +88,7 @@ async function logout(): Promise<void> {
             v-if="showMasterDataAdmin"
             index="/admin/expense-types"
           >
-            <span>主檔：費用類型</span>
+            <span>主檔：費用／單價</span>
           </el-menu-item>
         </el-menu>
       </el-aside>
