@@ -69,6 +69,11 @@ export interface PaymentDraftItemForm {
   quantity: number | null
   multiplier: number | null
   manualAmount: number | null
+  travelFrom: string
+  travelTo: string
+  expenseNature: string
+  confirmationNature: string
+  stampSize: string
 }
 
 export interface PaymentRequestUserSummary {
@@ -255,6 +260,14 @@ export interface CashierReviewPaymentResponse {
 }
 
 export interface RecordPaymentRequest {
+  version: number
+  paidAt: string
+  paymentMethod: PaymentMethod | null
+  paymentReference: string | null
+  paymentNote: string | null
+}
+
+export interface PatchPaymentRequest {
   version: number
   paidAt: string
   paymentMethod: PaymentMethod | null

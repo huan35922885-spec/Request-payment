@@ -32,9 +32,9 @@ export function getApprovalStatusLabel(status: ApprovalStatus): string {
     case 'PENDING_CASHIER':
       return '待出納確認'
     case 'APPROVED':
-      return '已核准'
+      return '核准結案'
     case 'REJECTED_CLOSED':
-      return '已退回結案'
+      return '退回結案'
   }
 }
 

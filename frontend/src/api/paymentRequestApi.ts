@@ -8,6 +8,7 @@ import type {
   ManagerReviewPaymentResponse,
   PaymentRequestDetail,
   PaymentRequestPageResponse,
+  PatchPaymentRequest,
   RecordPaymentRequest,
   RecordPaymentResponse,
   SubmitPaymentDraftRequest,
@@ -145,10 +146,72 @@ export async function rejectPaymentRequestByCashier(
 export async function recordPayment(
   id: number,
   request: RecordPaymentRequest,
+  proofFiles: File[],
 ): Promise<RecordPaymentResponse> {
+  const formData = new FormData()
+  formData.append(
+    'request',
+    new Blob([JSON.stringify(request)], { type: 'application/json' }),
+  )
+  for (const file of proofFiles) {
+    formData.append('files', file)
+  }
+
   const response = await http.post<RecordPaymentResponse>(
     `/payment-requests/${id}/record-payment`,
+    formData,
+    { headers: { 'Content-Type': 'multipart/form-data' } },
+  )
+  return response.data
+}
+
+export async function patchPaymentRequest(
+  id: number,
+  request: PatchPaymentRequest,
+): Promise<PaymentRequestDetail> {
+  const response = await http.patch<PaymentRequestDetail>(
+    `/payment-requests/${id}/payment`,
     request,
   )
+  return response.data
+}
+
+export async function uploadPaymentProofs(
+  id: number,
+  files: File[],
+): Promise<PaymentRequestDetail> {
+  const formData = new FormData()
+  for (const file of files) {
+    formData.append('files', file)
+  }
+  const response = await http.post<PaymentRequestDetail>(
+    `/payment-requests/${id}/payment-proofs`,
+    formData,
+    { headers: { 'Content-Type': 'multipart/form-data' } },
+  )
+  return response.data
+}
+
+export async function deletePaymentProof(
+  paymentRequestId: number,
+  attachmentId: number,
+): Promise<void> {
+  await http.delete(
+    `/payment-requests/${paymentRequestId}/payment-proofs/${attachmentId}`,
+  )
+}
+
+export interface PaymentResultExportQuery {
+  paidFrom: string
+  paidTo: string
+}
+
+export async function downloadPaymentResultExport(
+  params: PaymentResultExportQuery,
+): Promise<Blob> {
+  const response = await http.get<Blob>('/payment-reports/result-export', {
+    params,
+    responseType: 'blob',
+  })
   return response.data
 }

@@ -1,5 +1,7 @@
 # 請款資料 Read Authorization 現況盤點與權限矩陣設計
 
+> **Superseded（付款讀取角色）：** `PAYMENT_PENDING`／付款詳情讀取改為僅 `CASHIER`；見 [`excel-sync-roadmap.md`](excel-sync-roadmap.md)。下文 `PAYMENT_OPERATOR` 為歷史設計敘述。
+>
 > 本文件是設計與盤點產出，不代表本階段已完成授權實作。
 >
 > 本階段只讀取現有 Java、Vue、Migration、測試與 Git 狀態；沒有修改 SecurityConfig、Controller、Service、Repository、DTO、Entity、Vue、Router、Migration 或資料庫。

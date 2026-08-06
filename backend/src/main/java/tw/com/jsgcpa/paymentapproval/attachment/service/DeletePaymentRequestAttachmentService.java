@@ -10,11 +10,13 @@ import org.springframework.transaction.support.TransactionSynchronization;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 import tw.com.jsgcpa.paymentapproval.attachment.exception.PaymentRequestAttachmentNotFoundException;
+import tw.com.jsgcpa.paymentapproval.attachment.policy.PaymentProofMaintenancePolicy;
 import tw.com.jsgcpa.paymentapproval.attachment.policy.PaymentRequestAttachmentDeletePolicy;
 import tw.com.jsgcpa.paymentapproval.attachment.storage.AttachmentStorageService;
 import tw.com.jsgcpa.paymentapproval.attachment.storage.PreparedAttachmentDeletion;
 import tw.com.jsgcpa.paymentapproval.payment.entity.PaymentRequest;
 import tw.com.jsgcpa.paymentapproval.payment.entity.PaymentRequestAttachment;
+import tw.com.jsgcpa.paymentapproval.payment.enums.AttachmentType;
 import tw.com.jsgcpa.paymentapproval.payment.repository.PaymentRequestAttachmentRepository;
 import tw.com.jsgcpa.paymentapproval.payment.repository.PaymentRequestRepository;
 
@@ -31,16 +33,47 @@ public class DeletePaymentRequestAttachmentService {
     private final PaymentRequestAttachmentDeletePolicy deletePolicy;
     private final AttachmentStorageService attachmentStorageService;
 
+    private final PaymentProofMaintenancePolicy proofMaintenancePolicy;
+
     public DeletePaymentRequestAttachmentService(
             PaymentRequestRepository paymentRequestRepository,
             PaymentRequestAttachmentRepository attachmentRepository,
             PaymentRequestAttachmentDeletePolicy deletePolicy,
-            AttachmentStorageService attachmentStorageService
+            AttachmentStorageService attachmentStorageService,
+            PaymentProofMaintenancePolicy proofMaintenancePolicy
     ) {
         this.paymentRequestRepository = paymentRequestRepository;
         this.attachmentRepository = attachmentRepository;
         this.deletePolicy = deletePolicy;
         this.attachmentStorageService = attachmentStorageService;
+        this.proofMaintenancePolicy = proofMaintenancePolicy;
+    }
+
+    public void deleteForCashier(
+            Long paymentRequestId,
+            Long attachmentId,
+            Long authenticatedUserId
+    ) {
+        validateId(paymentRequestId);
+        validateId(attachmentId);
+        if (authenticatedUserId == null || authenticatedUserId <= 0) {
+            throw new PaymentRequestAttachmentNotFoundException();
+        }
+
+        PaymentRequest paymentRequest = paymentRequestRepository
+                .findById(paymentRequestId)
+                .orElseThrow(PaymentRequestAttachmentNotFoundException::new);
+        proofMaintenancePolicy.requireApproved(paymentRequest);
+
+        PaymentRequestAttachment attachment = attachmentRepository
+                .findById(attachmentId)
+                .orElseThrow(PaymentRequestAttachmentNotFoundException::new);
+        proofMaintenancePolicy.requirePaymentProof(attachment, paymentRequestId);
+        if (attachment.getAttachmentType() != AttachmentType.PAYMENT_PROOF) {
+            throw new PaymentRequestAttachmentNotFoundException();
+        }
+
+        deleteAttachmentMetadata(paymentRequestId, attachmentId, attachment);
     }
 
     public void delete(
@@ -64,9 +97,14 @@ public class DeletePaymentRequestAttachmentService {
 
         deletePolicy.validate(authenticatedUserId, paymentRequest, attachment);
 
-        // Recheck immediately before moving the binary and again before the
-        // metadata delete. No applicant or status is re-derived from master data.
-        deletePolicy.validate(authenticatedUserId, paymentRequest, attachment);
+        deleteAttachmentMetadata(paymentRequestId, attachmentId, attachment);
+    }
+
+    private void deleteAttachmentMetadata(
+            Long paymentRequestId,
+            Long attachmentId,
+            PaymentRequestAttachment attachment
+    ) {
         PreparedAttachmentDeletion prepared = attachmentStorageService
                 .prepareDelete(attachment.getStoragePath());
 
@@ -78,7 +116,6 @@ public class DeletePaymentRequestAttachmentService {
         lifecycle.register();
 
         try {
-            deletePolicy.validate(authenticatedUserId, paymentRequest, attachment);
             attachmentRepository.delete(attachment);
             attachmentRepository.flush();
         } catch (RuntimeException exception) {

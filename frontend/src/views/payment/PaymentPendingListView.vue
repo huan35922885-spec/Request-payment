@@ -1,8 +1,9 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
+import { ElMessage } from 'element-plus'
 import PaymentRequestStatusTag from '../../components/payment/PaymentRequestStatusTag.vue'
-import { getPaymentRequests } from '../../api/paymentRequestApi'
+import { downloadPaymentResultExport, getPaymentRequests } from '../../api/paymentRequestApi'
 import { getApiErrorCode, getApiErrorMessage } from '../../utils/apiError'
 import { useAuthStore } from '../../stores/auth'
 import { formatCurrency, formatDateTime } from '../../utils/format'
@@ -17,12 +18,49 @@ const errorMessage = ref('')
 const currentPage = ref(1)
 const pageSize = ref(20)
 
-const hasPaymentOperatorAuthority = computed(() =>
-  authStore.user?.roles.includes('PAYMENT_OPERATOR') === true,
+const hasCashierAuthority = computed(() =>
+  authStore.user?.roles.includes('CASHIER') === true,
 )
 
+const exportFrom = ref<Date | null>(null)
+const exportTo = ref<Date | null>(null)
+const exporting = ref(false)
+
+function formatExportDate(date: Date | null): string | null {
+  if (date === null) {
+    return null
+  }
+  const year = date.getFullYear()
+  const month = String(date.getMonth() + 1).padStart(2, '0')
+  const day = String(date.getDate()).padStart(2, '0')
+  return `${year}-${month}-${day}`
+}
+
+async function exportExcel(): Promise<void> {
+  const paidFrom = formatExportDate(exportFrom.value)
+  const paidTo = formatExportDate(exportTo.value)
+  if (paidFrom === null || paidTo === null) {
+    ElMessage.warning('請選擇匯出期間。')
+    return
+  }
+  exporting.value = true
+  try {
+    const blob = await downloadPaymentResultExport({ paidFrom, paidTo })
+    const url = URL.createObjectURL(blob)
+    const link = document.createElement('a')
+    link.href = url
+    link.download = `payment-result-${paidFrom}-${paidTo}.xlsx`
+    link.click()
+    URL.revokeObjectURL(url)
+  } catch (error: unknown) {
+    ElMessage.error(getApiErrorMessage(error))
+  } finally {
+    exporting.value = false
+  }
+}
+
 async function loadPaymentRequests(page = currentPage.value): Promise<void> {
-  if (!hasPaymentOperatorAuthority.value) {
+  if (!hasCashierAuthority.value) {
     pageData.value = null
     errorMessage.value = ''
     return
@@ -78,7 +116,7 @@ onMounted(() => {
   <section class="page-container">
     <div class="page-title">
       <div>
-        <p class="eyebrow">PAYMENT REGISTRATION QUEUE</p>
+        <p class="eyebrow">出納付款登記</p>
         <h1>待付款列表</h1>
         <p>查看已核准且尚未付款的請款案件，完成付款登記。</p>
       </div>
@@ -95,7 +133,7 @@ onMounted(() => {
     />
 
     <el-alert
-      v-if="!errorMessage && !hasPaymentOperatorAuthority"
+      v-if="!errorMessage && !hasCashierAuthority"
       title="目前登入者沒有付款待辦查看權限"
       type="warning"
       show-icon
@@ -103,7 +141,26 @@ onMounted(() => {
       class="page-alert"
     />
 
-    <el-card v-if="hasPaymentOperatorAuthority && !errorMessage" shadow="never" class="list-card">
+    <el-card v-if="hasCashierAuthority && !errorMessage" shadow="never" class="list-card export-card">
+      <template #header>
+        <strong>結果檔案匯出（Excel）</strong>
+      </template>
+      <el-form inline label-position="top">
+        <el-form-item label="付款日起">
+          <el-date-picker v-model="exportFrom" type="date" />
+        </el-form-item>
+        <el-form-item label="付款日迄">
+          <el-date-picker v-model="exportTo" type="date" />
+        </el-form-item>
+        <el-form-item label=" ">
+          <el-button type="primary" :loading="exporting" @click="exportExcel">
+            匯出 Excel
+          </el-button>
+        </el-form-item>
+      </el-form>
+    </el-card>
+
+    <el-card v-if="hasCashierAuthority && !errorMessage" shadow="never" class="list-card">
       <template #header>
         <div class="card-header">
           <div>
@@ -133,15 +190,15 @@ onMounted(() => {
         >
           <el-table-column prop="requestNo" label="請款單號" min-width="190" />
           <el-table-column prop="applicantName" label="申請人" min-width="120" />
-          <el-table-column prop="departmentName" label="申請部門" min-width="140" />
-          <el-table-column prop="companyName" label="所屬公司" min-width="140" />
-          <el-table-column prop="customerName" label="客戶" min-width="140" />
-          <el-table-column label="請款類別" width="110">
+          <el-table-column prop="departmentName" label="部門" min-width="140" />
+          <el-table-column prop="companyName" label="公司" min-width="140" />
+          <el-table-column prop="customerName" label="客戶名稱" min-width="140" />
+          <el-table-column label="支出／代墊" width="110">
             <template #default="scope">
               {{ scope.row.requestCategory === 'EXPENSE' ? '支出' : '代墊' }}
             </template>
           </el-table-column>
-          <el-table-column label="請款總金額" width="130" align="right">
+          <el-table-column label="請款金額" width="130" align="right">
             <template #default="scope">
               {{ formatCurrency(scope.row.totalAmount) }}
             </template>

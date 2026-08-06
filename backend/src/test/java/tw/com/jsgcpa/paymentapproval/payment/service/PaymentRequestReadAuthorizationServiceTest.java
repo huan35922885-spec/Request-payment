@@ -171,7 +171,7 @@ class PaymentRequestReadAuthorizationServiceTest {
     }
 
     @Test
-    void paymentOperatorCanReadApprovedUnpaid() {
+    void cashierCanReadApprovedUnpaid() {
         assertTrue(service.canReadDetail(
                 request(
                         APPLICANT_ID,
@@ -180,13 +180,13 @@ class PaymentRequestReadAuthorizationServiceTest {
                         PaymentStatus.UNPAID
                 ),
                 OTHER_USER_ID,
-                false,
-                true
+                true,
+                false
         ));
     }
 
     @Test
-    void paymentOperatorCanReadApprovedPaid() {
+    void cashierCanReadApprovedPaid() {
         assertTrue(service.canReadDetail(
                 request(
                         APPLICANT_ID,
@@ -195,14 +195,14 @@ class PaymentRequestReadAuthorizationServiceTest {
                         PaymentStatus.PAID
                 ),
                 OTHER_USER_ID,
-                false,
-                true
+                true,
+                false
         ));
     }
 
     @ParameterizedTest
-    @MethodSource("paymentOperatorCannotReadOtherStates")
-    void paymentOperatorCannotReadOtherStates(
+    @MethodSource("cashierCannotReadNonApprovedPaymentStates")
+    void cashierCannotReadNonApprovedPaymentStates(
             ApprovalStatus approvalStatus,
             PaymentStatus paymentStatus
     ) {
@@ -214,8 +214,8 @@ class PaymentRequestReadAuthorizationServiceTest {
                         paymentStatus
                 ),
                 OTHER_USER_ID,
-                false,
-                true
+                true,
+                false
         ));
     }
 
@@ -455,18 +455,18 @@ class PaymentRequestReadAuthorizationServiceTest {
     }
 
     @Test
-    void paymentPendingRequiresPaymentOperatorAuthority() {
-        assertDoesNotThrow(() -> service.requirePaymentOperatorAuthority(
+    void paymentPendingRequiresCashierAuthority() {
+        assertDoesNotThrow(() -> service.requireCashierAuthority(
                 PaymentRequestListScope.PAYMENT_PENDING,
                 true
         ));
     }
 
     @Test
-    void paymentPendingWithoutPaymentOperatorIsForbidden() {
+    void paymentPendingWithoutCashierIsForbidden() {
         PaymentDraftBusinessException exception = assertThrows(
                 PaymentDraftBusinessException.class,
-                () -> service.requirePaymentOperatorAuthority(
+                () -> service.requireCashierAuthority(
                         PaymentRequestListScope.PAYMENT_PENDING,
                         false
                 )
@@ -572,16 +572,14 @@ class PaymentRequestReadAuthorizationServiceTest {
         return Stream.of(
                 ApprovalStatus.DRAFT,
                 ApprovalStatus.PENDING_MANAGER,
-                ApprovalStatus.APPROVED,
                 ApprovalStatus.REJECTED_CLOSED
         );
     }
 
-    private static Stream<Arguments> paymentOperatorCannotReadOtherStates() {
+    private static Stream<Arguments> cashierCannotReadNonApprovedPaymentStates() {
         return Stream.of(
                 Arguments.of(ApprovalStatus.DRAFT, PaymentStatus.UNPAID),
                 Arguments.of(ApprovalStatus.PENDING_MANAGER, PaymentStatus.UNPAID),
-                Arguments.of(ApprovalStatus.PENDING_CASHIER, PaymentStatus.UNPAID),
                 Arguments.of(ApprovalStatus.REJECTED_CLOSED, PaymentStatus.UNPAID)
         );
     }

@@ -331,7 +331,7 @@ class GetPaymentRequestDetailServiceTest {
     }
 
     @Test
-    void allowsPaymentOperatorForApprovedUnpaid() {
+    void allowsCashierForApprovedUnpaid() {
         PaymentRequest request = basicRequest(
                 ApprovalStatus.APPROVED,
                 PaymentStatus.UNPAID
@@ -339,7 +339,7 @@ class GetPaymentRequestDetailServiceTest {
         stub(request, List.of(), List.of(), List.of());
 
         PaymentRequestDetailResponse response = service.getDetail(
-                REQUEST_ID, 9L, false, true
+                REQUEST_ID, 9L, true, false
         );
 
         assertEquals(ApprovalStatus.APPROVED, response.approvalStatus());
@@ -347,7 +347,7 @@ class GetPaymentRequestDetailServiceTest {
     }
 
     @Test
-    void allowsPaymentOperatorForApprovedPaid() {
+    void allowsCashierForApprovedPaid() {
         PaymentRequest request = basicRequest(
                 ApprovalStatus.APPROVED,
                 PaymentStatus.PAID
@@ -356,7 +356,7 @@ class GetPaymentRequestDetailServiceTest {
                 .thenReturn(Optional.of(request));
 
         PaymentRequestDetailResponse response = service.getDetail(
-                REQUEST_ID, 9L, false, true
+                REQUEST_ID, 9L, true, false
         );
 
         assertEquals(ApprovalStatus.APPROVED, response.approvalStatus());

@@ -74,26 +74,25 @@ public class PaymentRequestReadAuthorizationService {
             PaymentRequestListScope scope,
             boolean hasCashierAuthority
     ) {
-        if (scope == PaymentRequestListScope.CASHIER_PENDING
+        if ((scope == PaymentRequestListScope.CASHIER_PENDING
+                || scope == PaymentRequestListScope.PAYMENT_PENDING)
                 && !hasCashierAuthority) {
             throw new PaymentDraftBusinessException(
                     "PAYMENT_REQUEST_LIST_SCOPE_FORBIDDEN",
-                    "目前登入者沒有出納待辦查看權限"
+                    scope == PaymentRequestListScope.CASHIER_PENDING
+                            ? "目前登入者沒有出納待辦查看權限"
+                            : "目前登入者沒有付款待辦查看權限"
             );
         }
     }
 
+    /** @deprecated use {@link #requireCashierAuthority} — payment scope merged into CASHIER */
+    @Deprecated
     public void requirePaymentOperatorAuthority(
             PaymentRequestListScope scope,
             boolean hasPaymentOperatorAuthority
     ) {
-        if (scope == PaymentRequestListScope.PAYMENT_PENDING
-                && !hasPaymentOperatorAuthority) {
-            throw new PaymentDraftBusinessException(
-                    "PAYMENT_REQUEST_LIST_SCOPE_FORBIDDEN",
-                    "目前登入者沒有付款待辦查看權限"
-            );
-        }
+        requireCashierAuthority(scope, hasPaymentOperatorAuthority);
     }
 
     public PaymentStatus resolvePaymentStatusForList(
@@ -124,7 +123,7 @@ public class PaymentRequestReadAuthorizationService {
             PaymentRequest paymentRequest,
             Long authenticatedUserId,
             boolean hasCashierAuthority,
-            boolean hasPaymentOperatorAuthority
+            boolean ignoredPaymentOperatorAuthority
     ) {
         if (paymentRequest == null || authenticatedUserId == null) {
             return false;
@@ -152,10 +151,14 @@ public class PaymentRequestReadAuthorizationService {
             return true;
         }
 
-        return hasPaymentOperatorAuthority
+        if (hasCashierAuthority
                 && paymentRequest.getApprovalStatus() == ApprovalStatus.APPROVED
                 && (paymentRequest.getPaymentStatus() == PaymentStatus.UNPAID
-                || paymentRequest.getPaymentStatus() == PaymentStatus.PAID);
+                || paymentRequest.getPaymentStatus() == PaymentStatus.PAID)) {
+            return true;
+        }
+
+        return false;
     }
 
     private void requireAuthenticatedUser(Long authenticatedUserId) {

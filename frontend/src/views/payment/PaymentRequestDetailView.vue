@@ -4,10 +4,12 @@ import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import PaymentRequestStatusTag from '../../components/payment/PaymentRequestStatusTag.vue'
 import PaymentRequestAttachmentPanel from '../../components/attachment/PaymentRequestAttachmentPanel.vue'
+import PaymentProofPanel from '../../components/payment/PaymentProofPanel.vue'
 import {
   approvePaymentRequestByCashier,
   approvePaymentRequestByManager,
   getPaymentRequestDetail,
+  patchPaymentRequest,
   rejectPaymentRequestByCashier,
   rejectPaymentRequestByManager,
   recordPayment,
@@ -39,6 +41,8 @@ const reviewingAction = ref<ReviewAction | null>(null)
 const reviewComment = ref('')
 const errorMessage = ref('')
 const recordingPayment = ref(false)
+const maintainingPayment = ref(false)
+const paymentProofFiles = ref<File[]>([])
 const paymentForm = ref<{
   paidAt: Date | null
   paymentMethod: PaymentMethod | null
@@ -75,8 +79,8 @@ const cashierAuthorityError = computed(() =>
 )
 
 const paymentAuthorityError = computed(() =>
-  !authStore.user?.roles.includes('PAYMENT_OPERATOR')
-    ? '目前登入者沒有付款登記權限'
+  !authStore.user?.roles.includes('CASHIER')
+    ? '目前登入者沒有出納操作權限。'
     : '',
 )
 
@@ -112,11 +116,45 @@ const canRecordPayment = computed(() =>
   isPaymentView.value
   && detail.value?.approvalStatus === 'APPROVED'
   && detail.value?.paymentStatus === 'UNPAID'
-  && authStore.user?.roles.includes('PAYMENT_OPERATOR') === true,
+  && authStore.user?.roles.includes('CASHIER') === true,
+)
+
+const canMaintainAsCashier = computed(() =>
+  detail.value?.approvalStatus === 'APPROVED'
+  && authStore.user?.roles.includes('CASHIER') === true,
+)
+
+const canMaintainPaidPayment = computed(() =>
+  canMaintainAsCashier.value
+  && detail.value?.paymentStatus === 'PAID',
 )
 
 function formatUser(user: PaymentRequestDetail['applicant'] | null): string {
   return user?.displayName ?? '—'
+}
+
+function formatExtraValue(
+  extraData: Record<string, unknown> | null | undefined,
+  key: string,
+): string {
+  const value = extraData?.[key]
+  if (value === null || value === undefined || value === '') {
+    return '—'
+  }
+  return String(value)
+}
+
+function formatExtraPair(
+  extraData: Record<string, unknown> | null | undefined,
+  fromKey: string,
+  toKey: string,
+): string {
+  const from = formatExtraValue(extraData, fromKey)
+  const to = formatExtraValue(extraData, toKey)
+  if (from === '—' && to === '—') {
+    return '—'
+  }
+  return `${from} → ${to}`
 }
 
 function formatDepartment(department: PaymentRequestDetail['department']): string {
@@ -156,6 +194,12 @@ async function loadDetail(): Promise<void> {
   errorMessage.value = ''
   try {
     detail.value = await getPaymentRequestDetail(id)
+    if (detail.value.paymentStatus === 'PAID' && detail.value.paidAt !== null) {
+      paymentForm.value.paidAt = new Date(detail.value.paidAt)
+      paymentForm.value.paymentMethod = detail.value.paymentMethod
+      paymentForm.value.paymentReference = detail.value.paymentReference ?? ''
+      paymentForm.value.paymentNote = detail.value.paymentNote ?? ''
+    }
   } catch (error: unknown) {
     detail.value = null
     errorMessage.value = getApiErrorCode(error) === 'PAYMENT_REQUEST_NOT_FOUND'
@@ -414,6 +458,11 @@ async function recordPaymentAction(): Promise<void> {
     return
   }
 
+  if (paymentProofFiles.value.length === 0) {
+    ElMessage.warning('請上傳至少一份付款證明。')
+    return
+  }
+
   try {
     await ElMessageBox.confirm(
       '確認登記此筆付款？案件將由 APPROVED / UNPAID 變更為 APPROVED / PAID。',
@@ -436,7 +485,8 @@ async function recordPaymentAction(): Promise<void> {
       paymentMethod: paymentForm.value.paymentMethod,
       paymentReference: normalizedText(paymentForm.value.paymentReference),
       paymentNote: normalizedText(paymentForm.value.paymentNote),
-    })
+    }, paymentProofFiles.value)
+    paymentProofFiles.value = []
     ElMessage.success('付款登記成功。')
     await loadDetail()
   } catch (error: unknown) {
@@ -464,6 +514,7 @@ async function recordPaymentAction(): Promise<void> {
       code === 'PAID_BY_NOT_FOUND'
       || code === 'PAID_BY_INACTIVE'
       || code === 'INVALID_PAYMENT_DATE'
+      || code === 'PAYMENT_PROOF_REQUIRED'
     ) {
       ElMessage.error(getApiErrorMessage(error))
     } else {
@@ -471,6 +522,46 @@ async function recordPaymentAction(): Promise<void> {
     }
   } finally {
     recordingPayment.value = false
+  }
+}
+
+function onRecordProofChange(_uploadFile: unknown, uploadFiles: { raw?: File }[]): void {
+  paymentProofFiles.value = uploadFiles
+    .map((item) => item.raw)
+    .filter((file): file is File => file !== undefined)
+}
+
+async function savePaidPaymentMaintenance(): Promise<void> {
+  if (!canMaintainPaidPayment.value || detail.value === null || requestId.value === null) {
+    return
+  }
+  const paidAt = toTaipeiOffsetDateTime(paymentForm.value.paidAt)
+  if (paidAt === null) {
+    ElMessage.warning('請輸入有效的付款時間。')
+    return
+  }
+
+  maintainingPayment.value = true
+  try {
+    await patchPaymentRequest(requestId.value, {
+      version: detail.value.version,
+      paidAt,
+      paymentMethod: paymentForm.value.paymentMethod,
+      paymentReference: normalizedText(paymentForm.value.paymentReference),
+      paymentNote: normalizedText(paymentForm.value.paymentNote),
+    })
+    ElMessage.success('付款資料已更新。')
+    await loadDetail()
+  } catch (error: unknown) {
+    const code = getApiErrorCode(error)
+    if (code === 'PAYMENT_REQUEST_VERSION_CONFLICT') {
+      ElMessage.warning('案件狀態已變更，畫面將重新載入。')
+      await loadDetail()
+    } else {
+      ElMessage.error(getApiErrorMessage(error))
+    }
+  } finally {
+    maintainingPayment.value = false
   }
 }
 
@@ -487,7 +578,7 @@ watch(requestId, () => {
   <section class="page-container">
     <div class="page-title">
       <div>
-        <p class="eyebrow">PAYMENT REQUEST DETAIL</p>
+        <p class="eyebrow">請款單詳情</p>
         <h1>請款單詳情</h1>
         <p>查看請款內容、目前狀態與簽核歷程。</p>
       </div>
@@ -539,28 +630,29 @@ watch(requestId, () => {
 
         <el-descriptions :column="3" border>
           <el-descriptions-item label="請款單號">{{ detail.requestNo }}</el-descriptions-item>
-          <el-descriptions-item label="請款類別">{{ getRequestCategoryLabel(detail.requestCategory) }}</el-descriptions-item>
+          <el-descriptions-item label="支出／代墊">{{ getRequestCategoryLabel(detail.requestCategory) }}</el-descriptions-item>
           <el-descriptions-item label="簽核狀態">{{ getApprovalStatusLabel(detail.approvalStatus) }}</el-descriptions-item>
           <el-descriptions-item label="付款狀態">{{ getPaymentStatusLabel(detail.paymentStatus) }}</el-descriptions-item>
           <el-descriptions-item label="資料版本">{{ detail.version }}</el-descriptions-item>
           <el-descriptions-item label="申請人">{{ formatUser(detail.applicant) }}</el-descriptions-item>
-          <el-descriptions-item label="申請部門">{{ formatDepartment(detail.department) }}</el-descriptions-item>
-          <el-descriptions-item label="複核主管快照">{{ formatUser(detail.supervisor) }}</el-descriptions-item>
-          <el-descriptions-item label="所屬公司">{{ detail.company.code }} · {{ detail.company.name }}</el-descriptions-item>
-          <el-descriptions-item label="客戶">{{ detail.customer.code }} · {{ detail.customer.name }}</el-descriptions-item>
-          <el-descriptions-item label="請款總金額">{{ formatCurrency(detail.totalAmount) }}</el-descriptions-item>
+          <el-descriptions-item label="部門">{{ formatDepartment(detail.department) }}</el-descriptions-item>
+          <el-descriptions-item label="複核人">{{ formatUser(detail.supervisor) }}</el-descriptions-item>
+          <el-descriptions-item label="公司">{{ detail.company.code }} · {{ detail.company.name }}</el-descriptions-item>
+          <el-descriptions-item label="客戶代號">{{ detail.customer.code }}</el-descriptions-item>
+          <el-descriptions-item label="客戶名稱">{{ detail.customer.name }}</el-descriptions-item>
+          <el-descriptions-item label="請款金額">{{ formatCurrency(detail.totalAmount) }}</el-descriptions-item>
           <el-descriptions-item label="建立時間">{{ formatDateTime(detail.createdAt) }}</el-descriptions-item>
           <el-descriptions-item label="送出時間">{{ formatDateTime(detail.submittedAt) }}</el-descriptions-item>
           <el-descriptions-item label="核准時間">{{ formatDateTime(detail.approvedAt) }}</el-descriptions-item>
           <el-descriptions-item label="核准人">{{ formatUser(detail.approvedBy) }}</el-descriptions-item>
           <el-descriptions-item label="退回時間">{{ formatDateTime(detail.rejectedAt) }}</el-descriptions-item>
           <el-descriptions-item label="關閉時間">{{ formatDateTime(detail.closedAt) }}</el-descriptions-item>
-          <el-descriptions-item label="實際付款時間">{{ formatDateTime(detail.paidAt) }}</el-descriptions-item>
-          <el-descriptions-item label="付款登記人">{{ formatUser(detail.paidBy) }}</el-descriptions-item>
+          <el-descriptions-item label="付款日期">{{ formatDateTime(detail.paidAt) }}</el-descriptions-item>
+          <el-descriptions-item label="出納">{{ formatUser(detail.paidBy) }}</el-descriptions-item>
           <el-descriptions-item label="付款方式">{{ detail.paymentMethod ?? '—' }}</el-descriptions-item>
           <el-descriptions-item label="付款參考號碼">{{ detail.paymentReference ?? '—' }}</el-descriptions-item>
           <el-descriptions-item label="付款備註" :span="3">{{ detail.paymentNote ?? '—' }}</el-descriptions-item>
-          <el-descriptions-item label="請款事由" :span="3">{{ detail.reason }}</el-descriptions-item>
+          <el-descriptions-item label="事由" :span="3">{{ detail.reason }}</el-descriptions-item>
         </el-descriptions>
       </el-card>
 
@@ -682,7 +774,7 @@ watch(requestId, () => {
           <div class="card-header">
             <strong>登記付款</strong>
             <el-tag type="info" effect="plain">
-              {{ authStore.user?.roles.includes('PAYMENT_OPERATOR') ? 'PAYMENT_OPERATOR' : '無付款登記權限' }}
+              {{ authStore.user?.roles.includes('CASHIER') ? '出納（CASHIER）' : '無出納權限' }}
             </el-tag>
           </div>
         </template>
@@ -698,7 +790,7 @@ watch(requestId, () => {
           <el-form label-position="top" class="payment-form">
             <el-row :gutter="16">
               <el-col :xs="24" :md="12">
-                <el-form-item label="實際付款時間" required>
+                <el-form-item label="付款日期" required>
                   <el-date-picker
                     v-model="paymentForm.paidAt"
                     type="datetime"
@@ -742,6 +834,20 @@ watch(requestId, () => {
                 placeholder="可輸入付款備註"
               />
             </el-form-item>
+            <el-form-item label="付款證明" required>
+              <el-upload
+                :auto-upload="false"
+                multiple
+                accept=".pdf,.jpg,.jpeg,.png"
+                :file-list="[]"
+                @change="onRecordProofChange"
+              >
+                <el-button type="primary" plain>選擇檔案（可多檔）</el-button>
+              </el-upload>
+              <el-text v-if="paymentProofFiles.length > 0" type="info" size="small">
+                已選 {{ paymentProofFiles.length }} 個檔案
+              </el-text>
+            </el-form-item>
             <div class="review-actions">
               <el-button
                 type="primary"
@@ -763,6 +869,74 @@ watch(requestId, () => {
         />
       </el-card>
 
+      <el-card
+        v-if="detail.approvalStatus === 'APPROVED'"
+        shadow="never"
+        class="detail-card"
+      >
+        <template #header>
+          <strong>付款證明（出納）</strong>
+        </template>
+        <PaymentProofPanel
+          :detail="detail"
+          :can-maintain="canMaintainAsCashier"
+          @refreshed="loadDetail"
+        />
+      </el-card>
+
+      <el-card
+        v-if="canMaintainPaidPayment"
+        shadow="never"
+        class="detail-card payment-action-card"
+      >
+        <template #header>
+          <strong>維護付款資料（出納）</strong>
+        </template>
+        <el-form label-position="top" class="payment-form">
+          <el-row :gutter="16">
+            <el-col :xs="24" :md="12">
+              <el-form-item label="付款日期" required>
+                <el-date-picker
+                  v-model="paymentForm.paidAt"
+                  type="datetime"
+                  format="YYYY-MM-DD HH:mm"
+                  style="width: 100%"
+                />
+              </el-form-item>
+            </el-col>
+            <el-col :xs="24" :md="12">
+              <el-form-item label="付款方式">
+                <el-select
+                  v-model="paymentForm.paymentMethod"
+                  clearable
+                  style="width: 100%"
+                >
+                  <el-option
+                    v-for="option in PAYMENT_METHOD_OPTIONS"
+                    :key="option.value"
+                    :label="option.label"
+                    :value="option.value"
+                  />
+                </el-select>
+              </el-form-item>
+            </el-col>
+          </el-row>
+          <el-form-item label="付款參考號碼">
+            <el-input v-model="paymentForm.paymentReference" maxlength="100" />
+          </el-form-item>
+          <el-form-item label="付款備註">
+            <el-input v-model="paymentForm.paymentNote" type="textarea" :rows="3" />
+          </el-form-item>
+          <el-button
+            type="primary"
+            :loading="maintainingPayment"
+            @click="savePaidPaymentMaintenance"
+          >
+            儲存付款資料
+          </el-button>
+        </el-form>
+      </el-card>
+
       <el-card shadow="never" class="detail-card">
         <template #header>
           <div class="card-header">
@@ -772,33 +946,55 @@ watch(requestId, () => {
         </template>
 
         <el-table :data="detail.items" empty-text="沒有明細">
-          <el-table-column label="費用類型" min-width="180">
+          <el-table-column label="費用名稱" min-width="180">
             <template #default="scope">
               {{ scope.row.expenseTypeCode }} · {{ scope.row.expenseTypeName }}
             </template>
           </el-table-column>
-          <el-table-column prop="calculationType" label="計算類型" width="150" />
-          <el-table-column label="單價快照" min-width="170">
+          <el-table-column label="起點／終點" min-width="160">
             <template #default="scope">
-              <span>{{ scope.row.priceCode ?? '人工輸入' }}</span>
-              <small>{{ scope.row.unitPrice === null ? '—' : formatCurrency(scope.row.unitPrice) }}</small>
+              {{ formatExtraPair(scope.row.extraData, 'startLocation', 'endLocation') }}
+            </template>
+          </el-table-column>
+          <el-table-column label="費用性質" width="100">
+            <template #default="scope">
+              {{ formatExtraValue(scope.row.extraData, 'expenseNature') }}
+            </template>
+          </el-table-column>
+          <el-table-column label="函證性質" width="100">
+            <template #default="scope">
+              {{ formatExtraValue(scope.row.extraData, 'mailType') }}
+            </template>
+          </el-table-column>
+          <el-table-column label="印章大小" width="90">
+            <template #default="scope">
+              {{ formatExtraValue(scope.row.extraData, 'stampSize') }}
             </template>
           </el-table-column>
           <el-table-column label="計算資料" min-width="220">
             <template #default="scope">
               <span v-if="scope.row.calculationType === 'MEAL'">
-                人數 {{ scope.row.peopleCount ?? '—' }} × 天數 {{ scope.row.days ?? '—' }} × 餐數 {{ scope.row.quantity ?? '—' }} × 單價快照
+                人數 {{ scope.row.peopleCount ?? '—' }} × 天數 {{ scope.row.days ?? '—' }} × 餐數 {{ scope.row.quantity ?? '—' }} × 單價
               </span>
               <span v-else-if="scope.row.calculationType === 'MANUAL' || scope.row.calculationType === 'TRAVEL'">
-                人工輸入金額
+                請款金額（人工輸入）
+              </span>
+              <span v-else-if="scope.row.calculationType === 'CONFIRMATION'">
+                數量 {{ scope.row.quantity ?? '—' }} × 單價 × 來回倍數 {{ scope.row.multiplier ?? '—' }}
               </span>
               <span v-else>
-                數量 {{ scope.row.quantity ?? '—' }} × 單價快照 × 倍數 {{ scope.row.multiplier ?? '—' }}
+                數量 {{ scope.row.quantity ?? '—' }} × 單價 × 倍數 {{ scope.row.multiplier ?? '—' }}
               </span>
             </template>
           </el-table-column>
-          <el-table-column prop="description" label="明細說明" min-width="180" />
-          <el-table-column label="明細金額" width="130" align="right">
+          <el-table-column label="單價" min-width="140">
+            <template #default="scope">
+              <span>{{ scope.row.priceCode ?? '人工輸入' }}</span>
+              <small>{{ scope.row.unitPrice === null ? '—' : formatCurrency(scope.row.unitPrice) }}</small>
+            </template>
+          </el-table-column>
+          <el-table-column prop="description" label="明細說明" min-width="160" />
+          <el-table-column label="請款金額" width="130" align="right">
             <template #default="scope">
               {{ formatCurrency(scope.row.amount) }}
             </template>

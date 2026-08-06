@@ -244,8 +244,8 @@ class PaymentProofPostgresIntegrationTest {
         PaymentRequestDetailResponse detail = detailService.getDetail(
                 paymentRequestId,
                 operatorId,
-                false,
-                true
+                true,
+                false
         );
         assertEquals("PAID", detail.paymentStatus().name());
 
@@ -258,8 +258,8 @@ class PaymentProofPostgresIntegrationTest {
                 paymentRequestId,
                 attachmentId,
                 operatorId,
-                false,
-                true
+                true,
+                false
         );
         try (var input = download.resource().getInputStream()) {
             assertArrayEquals(PROOF, input.readAllBytes());
@@ -456,6 +456,11 @@ class PaymentProofPostgresIntegrationTest {
             );
         }
         if (operatorId != null) {
+            jdbcTemplate.update(
+                    "DELETE FROM app_user_roles WHERE user_id IN (?, ?)",
+                    operatorId,
+                    applicantId
+            );
             jdbcTemplate.update("DELETE FROM app_users WHERE id IN (?, ?)", operatorId, applicantId);
         }
         if (customerId != null) {
@@ -502,6 +507,10 @@ class PaymentProofPostgresIntegrationTest {
                 "pg.e2e.operator." + UUID.randomUUID(),
                 "PG E2E Payment Operator",
                 departmentId
+        );
+        jdbcTemplate.update(
+                "INSERT INTO app_user_roles (user_id, role_code) VALUES (?, 'CASHIER')",
+                operatorId
         );
         companyId = jdbcTemplate.queryForObject(
                 "INSERT INTO companies(code, name, active) VALUES (?, ?, TRUE) RETURNING id",

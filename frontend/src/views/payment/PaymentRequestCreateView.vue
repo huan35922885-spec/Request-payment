@@ -49,6 +49,11 @@ function createEmptyItem(): PaymentDraftItemForm {
     quantity: null,
     multiplier: null,
     manualAmount: null,
+    travelFrom: '',
+    travelTo: '',
+    expenseNature: '',
+    confirmationNature: '',
+    stampSize: '',
   }
 }
 
@@ -62,17 +67,17 @@ const form = reactive<PaymentDraftFormModel>({
 
 const rules: FormRules = {
   companyId: [
-    { required: true, message: '所屬公司為必填欄位', trigger: 'change' },
+    { required: true, message: '公司為必填欄位', trigger: 'change' },
   ],
   customerId: [
     { required: true, message: '客戶為必填欄位', trigger: 'change' },
   ],
   requestCategory: [
-    { required: true, message: '請款類別為必填欄位', trigger: 'change' },
+    { required: true, message: '支出／代墊為必填欄位', trigger: 'change' },
   ],
   reason: [
-    { required: true, message: '請款事由為必填欄位', trigger: 'blur' },
-    { max: 2000, message: '請款事由不可超過 2000 個字元', trigger: 'blur' },
+    { required: true, message: '事由為必填欄位', trigger: 'blur' },
+    { max: 2000, message: '事由不可超過 2000 個字元', trigger: 'blur' },
   ],
 }
 
@@ -122,13 +127,13 @@ function validateItems(): boolean {
 
   for (const [index, item] of form.items.entries()) {
     if (item.expenseTypeId === null) {
-      return itemError(index, '費用類型為必填欄位')
+      return itemError(index, '費用名稱為必填欄位')
     }
     const expenseType = masterDataStore.expenseTypes.find(
       (option) => option.id === item.expenseTypeId,
     )
     if (expenseType === undefined) {
-      return itemError(index, '費用類型無效')
+      return itemError(index, '費用名稱無效')
     }
 
     const calculationType: CalculationType = expenseType.calculationType
@@ -169,24 +174,56 @@ function cleanDescription(value: string): string | null {
   return trimmed === '' ? null : trimmed
 }
 
+function buildExtraData(
+  item: PaymentDraftItemForm,
+  calculationType: CalculationType,
+): Record<string, unknown> | null {
+  const extra: Record<string, unknown> = {}
+  if (calculationType === 'TRAVEL') {
+    const from = item.travelFrom.trim()
+    const to = item.travelTo.trim()
+    if (from !== '') {
+      extra.startLocation = from
+    }
+    if (to !== '') {
+      extra.endLocation = to
+    }
+  }
+  if (calculationType === 'CONFIRMATION') {
+    const expenseNature = item.expenseNature.trim()
+    const confirmationNature = item.confirmationNature.trim()
+    if (expenseNature !== '') {
+      extra.expenseNature = expenseNature
+    }
+    if (confirmationNature !== '') {
+      extra.mailType = confirmationNature
+    }
+  }
+  const stampSize = item.stampSize.trim()
+  if (stampSize !== '') {
+    extra.stampSize = stampSize
+  }
+  return Object.keys(extra).length === 0 ? null : extra
+}
+
 function buildItemRequest(
   item: PaymentDraftItemForm,
   sortOrder: number,
 ): CreatePaymentDraftItemRequest {
   if (item.expenseTypeId === null) {
-    throw new Error('費用類型為必填欄位')
+    throw new Error('費用名稱為必填欄位')
   }
   const expenseType = masterDataStore.expenseTypes.find(
     (option) => option.id === item.expenseTypeId,
   )
   if (expenseType === undefined) {
-    throw new Error('費用類型無效')
+    throw new Error('費用名稱無效')
   }
 
   const base = {
     expenseTypeId: item.expenseTypeId,
     description: cleanDescription(item.description),
-    extraData: null,
+    extraData: buildExtraData(item, expenseType.calculationType),
     sortOrder,
   }
 
@@ -226,7 +263,7 @@ function buildItemRequest(
 
 function buildCreateDraftRequest(): CreatePaymentDraftRequest {
   if (form.companyId === null || form.customerId === null || form.requestCategory === null) {
-    throw new Error('所屬公司、客戶與請款類別為必填欄位')
+    throw new Error('公司、客戶與支出／代墊為必填欄位')
   }
   return {
     companyId: form.companyId,
@@ -321,7 +358,7 @@ onMounted(() => {
   <section class="page-container">
     <div class="page-title">
       <div>
-        <p class="eyebrow">PAYMENT REQUEST</p>
+        <p class="eyebrow">請款單</p>
         <h1>新增請款草稿</h1>
         <p>填寫資料後先儲存為草稿，之後可再送出審核。</p>
       </div>
@@ -362,10 +399,10 @@ onMounted(() => {
       >
         <el-row :gutter="24">
           <el-col :xs="24" :md="8">
-            <el-form-item label="所屬公司" prop="companyId">
+            <el-form-item label="公司" prop="companyId">
               <el-select
                 v-model="form.companyId"
-                placeholder="請選擇所屬公司"
+                placeholder="請選擇公司"
                 filterable
                 clearable
                 class="full-width"
@@ -398,10 +435,10 @@ onMounted(() => {
             </el-form-item>
           </el-col>
           <el-col :xs="24" :md="8">
-            <el-form-item label="請款類別" prop="requestCategory">
+            <el-form-item label="支出／代墊" prop="requestCategory">
               <el-select
                 v-model="form.requestCategory"
-                placeholder="請選擇請款類別"
+                placeholder="請選擇支出或代墊"
                 class="full-width"
               >
                 <el-option
@@ -415,14 +452,14 @@ onMounted(() => {
           </el-col>
         </el-row>
 
-        <el-form-item label="請款事由" prop="reason">
+        <el-form-item label="事由" prop="reason">
           <el-input
             v-model="form.reason"
             type="textarea"
             :rows="3"
             maxlength="2000"
             show-word-limit
-            placeholder="請輸入請款事由"
+            placeholder="請輸入事由"
           />
         </el-form-item>
 
@@ -466,7 +503,7 @@ onMounted(() => {
         <el-descriptions-item label="請款單號">{{ createdDraft.requestNo }}</el-descriptions-item>
         <el-descriptions-item label="簽核狀態">{{ getApprovalStatusLabel(createdDraft.approvalStatus) }}</el-descriptions-item>
         <el-descriptions-item label="付款狀態">{{ getPaymentStatusLabel(createdDraft.paymentStatus) }}</el-descriptions-item>
-        <el-descriptions-item label="請款總金額">{{ createdDraft.totalAmount.toFixed(2) }}</el-descriptions-item>
+        <el-descriptions-item label="請款金額">{{ createdDraft.totalAmount.toFixed(2) }}</el-descriptions-item>
         <el-descriptions-item label="資料版本">{{ createdDraft.version }}</el-descriptions-item>
         <el-descriptions-item label="明細筆數">{{ createdDraft.items.length }}</el-descriptions-item>
       </el-descriptions>

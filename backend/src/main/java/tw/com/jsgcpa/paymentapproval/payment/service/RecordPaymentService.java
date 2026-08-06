@@ -3,6 +3,8 @@ package tw.com.jsgcpa.paymentapproval.payment.service;
 import java.time.Clock;
 import java.time.OffsetDateTime;
 import java.time.ZoneId;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 import org.slf4j.Logger;
@@ -18,19 +20,13 @@ import tw.com.jsgcpa.paymentapproval.approval.enums.ApprovalAction;
 import tw.com.jsgcpa.paymentapproval.approval.enums.ApprovalStatus;
 import tw.com.jsgcpa.paymentapproval.approval.repository.ApprovalHistoryRepository;
 import tw.com.jsgcpa.paymentapproval.attachment.storage.AttachmentStorageService;
-import tw.com.jsgcpa.paymentapproval.attachment.storage.StoredAttachmentFile;
-import tw.com.jsgcpa.paymentapproval.attachment.validation.AttachmentFileValidator;
-import tw.com.jsgcpa.paymentapproval.attachment.validation.ValidatedAttachmentFile;
 import tw.com.jsgcpa.paymentapproval.organization.entity.AppUser;
 import tw.com.jsgcpa.paymentapproval.organization.repository.AppUserRepository;
 import tw.com.jsgcpa.paymentapproval.payment.dto.request.RecordPaymentRequest;
 import tw.com.jsgcpa.paymentapproval.payment.dto.response.RecordPaymentResponse;
 import tw.com.jsgcpa.paymentapproval.payment.entity.PaymentRequest;
-import tw.com.jsgcpa.paymentapproval.payment.entity.PaymentRequestAttachment;
-import tw.com.jsgcpa.paymentapproval.payment.enums.AttachmentType;
 import tw.com.jsgcpa.paymentapproval.payment.enums.PaymentStatus;
 import tw.com.jsgcpa.paymentapproval.payment.exception.PaymentDraftBusinessException;
-import tw.com.jsgcpa.paymentapproval.payment.repository.PaymentRequestAttachmentRepository;
 import tw.com.jsgcpa.paymentapproval.payment.repository.PaymentRequestRepository;
 
 @Service
@@ -43,8 +39,7 @@ public class RecordPaymentService {
     private final PaymentRequestRepository paymentRequestRepository;
     private final AppUserRepository appUserRepository;
     private final ApprovalHistoryRepository approvalHistoryRepository;
-    private final PaymentRequestAttachmentRepository attachmentRepository;
-    private final AttachmentFileValidator attachmentFileValidator;
+    private final PaymentMaintenanceService paymentMaintenanceService;
     private final AttachmentStorageService attachmentStorageService;
     private final TransactionRollbackCleanupRegistrar cleanupRegistrar;
     private final Clock clock;
@@ -54,8 +49,7 @@ public class RecordPaymentService {
             PaymentRequestRepository paymentRequestRepository,
             AppUserRepository appUserRepository,
             ApprovalHistoryRepository approvalHistoryRepository,
-            PaymentRequestAttachmentRepository attachmentRepository,
-            AttachmentFileValidator attachmentFileValidator,
+            PaymentMaintenanceService paymentMaintenanceService,
             AttachmentStorageService attachmentStorageService,
             TransactionRollbackCleanupRegistrar cleanupRegistrar
     ) {
@@ -63,8 +57,7 @@ public class RecordPaymentService {
                 paymentRequestRepository,
                 appUserRepository,
                 approvalHistoryRepository,
-                attachmentRepository,
-                attachmentFileValidator,
+                paymentMaintenanceService,
                 attachmentStorageService,
                 cleanupRegistrar,
                 Clock.system(BUSINESS_ZONE)
@@ -75,8 +68,7 @@ public class RecordPaymentService {
             PaymentRequestRepository paymentRequestRepository,
             AppUserRepository appUserRepository,
             ApprovalHistoryRepository approvalHistoryRepository,
-            PaymentRequestAttachmentRepository attachmentRepository,
-            AttachmentFileValidator attachmentFileValidator,
+            PaymentMaintenanceService paymentMaintenanceService,
             AttachmentStorageService attachmentStorageService,
             TransactionRollbackCleanupRegistrar cleanupRegistrar,
             Clock clock
@@ -84,8 +76,7 @@ public class RecordPaymentService {
         this.paymentRequestRepository = paymentRequestRepository;
         this.appUserRepository = appUserRepository;
         this.approvalHistoryRepository = approvalHistoryRepository;
-        this.attachmentRepository = attachmentRepository;
-        this.attachmentFileValidator = attachmentFileValidator;
+        this.paymentMaintenanceService = paymentMaintenanceService;
         this.attachmentStorageService = attachmentStorageService;
         this.cleanupRegistrar = cleanupRegistrar;
         this.clock = clock;
@@ -94,7 +85,36 @@ public class RecordPaymentService {
     public RecordPaymentResponse recordPayment(
             Long paymentRequestId,
             RecordPaymentRequest request,
+            List<MultipartFile> paymentProofFiles,
+            Long authenticatedUserId
+    ) {
+        List<MultipartFile> files = normalizeProofFiles(paymentProofFiles);
+        if (files.isEmpty()) {
+            throw businessError(
+                    "PAYMENT_PROOF_REQUIRED",
+                    "Payment proof file is required"
+            );
+        }
+        return recordPaymentInternal(paymentRequestId, request, files, authenticatedUserId);
+    }
+
+    public RecordPaymentResponse recordPayment(
+            Long paymentRequestId,
+            RecordPaymentRequest request,
             MultipartFile paymentProofFile,
+            Long authenticatedUserId
+    ) {
+        List<MultipartFile> files = new ArrayList<>();
+        if (paymentProofFile != null && !paymentProofFile.isEmpty()) {
+            files.add(paymentProofFile);
+        }
+        return recordPayment(paymentRequestId, request, files, authenticatedUserId);
+    }
+
+    private RecordPaymentResponse recordPaymentInternal(
+            Long paymentRequestId,
+            RecordPaymentRequest request,
+            List<MultipartFile> paymentProofFiles,
             Long authenticatedUserId
     ) {
         validatePaymentRequestId(paymentRequestId);
@@ -125,19 +145,10 @@ public class RecordPaymentService {
                     "Payment request is already PAID"
             );
         }
-        if (paymentProofFile == null) {
+        if (paymentProofFiles == null || paymentProofFiles.isEmpty()) {
             throw businessError(
                     "PAYMENT_PROOF_REQUIRED",
                     "Payment proof file is required"
-            );
-        }
-        if (attachmentRepository.existsByPaymentRequest_IdAndAttachmentType(
-                paymentRequestId,
-                AttachmentType.PAYMENT_PROOF
-        )) {
-            throw businessError(
-                    "PAYMENT_PROOF_ALREADY_EXISTS",
-                    "Payment proof already exists"
             );
         }
 
@@ -153,32 +164,14 @@ public class RecordPaymentService {
             );
         }
 
-        ValidatedAttachmentFile validatedFile = attachmentFileValidator.validate(paymentProofFile);
-        StoredAttachmentFile storedFile = attachmentStorageService.store(
-                paymentRequestId,
-                validatedFile
-        );
-        AtomicBoolean cleaned = new AtomicBoolean(false);
-        RuntimeException[] failure = new RuntimeException[1];
-        Runnable cleanup = () -> cleanupStoredFile(
-                storedFile.relativeStoragePath(),
-                cleaned,
-                failure[0]
-        );
-
         try {
-            cleanupRegistrar.register(cleanup);
+            cleanupRegistrar.register(() -> { });
 
-            PaymentRequestAttachment attachment = new PaymentRequestAttachment();
-            attachment.setPaymentRequest(paymentRequest);
-            attachment.setUploadedBy(paidBy);
-            attachment.setAttachmentType(AttachmentType.PAYMENT_PROOF);
-            attachment.setOriginalFilename(validatedFile.safeOriginalFilename());
-            attachment.setStoredFilename(storedFile.storedFilename());
-            attachment.setStoragePath(storedFile.relativeStoragePath());
-            attachment.setContentType(storedFile.contentType());
-            attachment.setFileSize(storedFile.fileSize());
-            attachmentRepository.saveAndFlush(attachment);
+            paymentMaintenanceService.persistProofFiles(
+                    paymentRequest,
+                    paymentProofFiles,
+                    paidBy
+            );
 
             ApprovalStatus fromApprovalStatus = paymentRequest.getApprovalStatus();
             PaymentStatus fromPaymentStatus = paymentRequest.getPaymentStatus();
@@ -220,17 +213,10 @@ public class RecordPaymentService {
                     savedPaymentRequest.getVersion()
             );
         } catch (OptimisticLockingFailureException exception) {
-            PaymentDraftBusinessException conflict = businessError(
+            throw businessError(
                     "PAYMENT_REQUEST_VERSION_CONFLICT",
                     "Payment request version conflict: " + paymentRequestId
             );
-            failure[0] = conflict;
-            cleanup.run();
-            throw conflict;
-        } catch (RuntimeException exception) {
-            failure[0] = exception;
-            cleanup.run();
-            throw exception;
         }
     }
 
@@ -303,6 +289,15 @@ public class RecordPaymentService {
         }
         String normalized = value.strip();
         return normalized.isEmpty() ? null : normalized;
+    }
+
+    private List<MultipartFile> normalizeProofFiles(List<MultipartFile> files) {
+        if (files == null) {
+            return List.of();
+        }
+        return files.stream()
+                .filter(file -> file != null && !file.isEmpty())
+                .toList();
     }
 
     private PaymentDraftBusinessException businessError(String code, String message) {
