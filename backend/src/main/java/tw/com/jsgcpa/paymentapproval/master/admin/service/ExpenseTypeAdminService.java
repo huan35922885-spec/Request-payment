@@ -119,7 +119,7 @@ public class ExpenseTypeAdminService {
             RenameExpenseTypeRequest request,
             Long actorId
     ) {
-        ExpenseType expenseType = findExpenseType(id);
+        ExpenseType expenseType = findExpenseTypeForWrite(id);
         validateVersion(expenseType, request.version());
         if (expenseType.getName().equals(request.name())) {
             throw conflict(
@@ -148,7 +148,7 @@ public class ExpenseTypeAdminService {
             ExpenseTypeVersionRequest request,
             Long actorId
     ) {
-        ExpenseType expenseType = findExpenseType(id);
+        ExpenseType expenseType = findExpenseTypeForWrite(id);
         validateVersion(expenseType, request.version());
         if (Boolean.TRUE.equals(expenseType.getActive())) {
             throw conflict(
@@ -188,7 +188,7 @@ public class ExpenseTypeAdminService {
             DeactivateExpenseTypeRequest request,
             Long actorId
     ) {
-        ExpenseType expenseType = findExpenseType(id);
+        ExpenseType expenseType = findExpenseTypeForWrite(id);
         validateVersion(expenseType, request.version());
         if (!Boolean.TRUE.equals(expenseType.getActive())) {
             throw conflict(
@@ -215,6 +215,14 @@ public class ExpenseTypeAdminService {
     private ExpenseType findExpenseType(Long id) {
         return expenseTypeRepository.findById(id == null ? -1L : id)
                 .orElseThrow(() -> new ExpenseTypeAdminBusinessException(
+                        "EXPENSE_TYPE_NOT_FOUND",
+                        "Expense type not found: " + id
+                ));
+    }
+
+    private ExpenseType findExpenseTypeForWrite(Long id) {
+        return expenseTypeRepository.findByIdForUpdate(id == null ? -1L : id)
+                .orElseThrow(() -> conflict(
                         "EXPENSE_TYPE_NOT_FOUND",
                         "Expense type not found: " + id
                 ));

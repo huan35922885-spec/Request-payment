@@ -4,6 +4,7 @@ import java.time.Clock;
 import java.time.LocalDate;
 import java.time.ZoneId;
 import java.util.List;
+import java.util.Locale;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 import tw.com.jsgcpa.paymentapproval.master.entity.ExpensePriceSetting;
@@ -30,10 +31,17 @@ public class ExpensePriceResolver {
     }
 
     public ExpensePriceSetting resolve(Long expenseTypeId, String requestedPriceCode) {
+        return resolve(expenseTypeId, requestedPriceCode, LocalDate.now(clock));
+    }
+
+    public ExpensePriceSetting resolve(
+            Long expenseTypeId,
+            String requestedPriceCode,
+            LocalDate effectiveDate
+    ) {
         String priceCode = requestedPriceCode == null
                 ? DEFAULT_PRICE_CODE
-                : requestedPriceCode.trim();
-        LocalDate effectiveDate = LocalDate.now(clock);
+                : requestedPriceCode.strip().toUpperCase(Locale.ROOT);
 
         List<ExpensePriceSetting> priceSettings =
                 repository.findEffectivePriceSettings(
