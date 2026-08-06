@@ -165,13 +165,12 @@ public class ExpensePriceSettingAdminService {
         ensurePricedType(type);
         rejectBackdate(request.effectiveFrom());
         String priceCode = normalizePriceCode(request.priceCode());
-        rejectOverlap(
+        rejectActiveOverlap(
                 expenseTypeId,
                 priceCode,
                 request.effectiveFrom(),
                 null,
-                0L,
-                true
+                0L
         );
 
         ExpensePriceSetting setting = new ExpensePriceSetting();
@@ -298,9 +297,9 @@ public class ExpensePriceSettingAdminService {
             );
         }
         ensurePricedType(type);
-        rejectOverlap(
+        rejectActiveOverlap(
                 type.getId(), setting.getPriceCode(), setting.getEffectiveFrom(),
-                setting.getEffectiveTo(), setting.getId(), true
+                setting.getEffectiveTo(), setting.getId()
         );
         Map<String, Object> before = snapshot(setting);
         Long beforeVersion = setting.getVersion();
@@ -331,12 +330,13 @@ public class ExpensePriceSettingAdminService {
         }
         ensurePricedType(type);
         LocalDate today = today();
-        if (Boolean.TRUE.equals(type.getActive())) {
-            List<ExpensePriceSetting> current =
-                    priceSettingRepository.findEffectivePriceSettings(
-                            type.getId(), setting.getPriceCode(), today
-                    );
-            if (current.size() == 1 && current.get(0).getId().equals(setting.getId())) {
+        Long targetId = setting.getId();
+        if (Boolean.TRUE.equals(type.getActive()) && isEffectiveOn(setting, today)) {
+            boolean hasOtherCurrentPrice = priceSettingRepository.findEffectivePrices(
+                            type.getId(), today
+                    ).stream()
+                    .anyMatch(current -> !current.getId().equals(targetId));
+            if (!hasOtherCurrentPrice) {
                 throw conflict(
                         "EXPENSE_PRICE_CURRENT_REQUIRED",
                         "An active expense type must keep one current price"
@@ -380,19 +380,15 @@ public class ExpensePriceSettingAdminService {
         }
     }
 
-    private void rejectOverlap(
+    private void rejectActiveOverlap(
             Long expenseTypeId,
             String priceCode,
             LocalDate from,
             LocalDate to,
-            Long excludedId,
-            boolean activeOnly
+            Long excludedId
     ) {
-        List<ExpensePriceSetting> overlaps = activeOnly
-                ? priceSettingRepository.findOverlappingActivePeriods(
-                        expenseTypeId, priceCode, from, to, excludedId
-                )
-                : priceSettingRepository.findOverlappingPeriods(
+        List<ExpensePriceSetting> overlaps = priceSettingRepository
+                .findOverlappingActivePeriods(
                         expenseTypeId, priceCode, from, to, excludedId
                 );
         if (!overlaps.isEmpty()) {
@@ -412,11 +408,18 @@ public class ExpensePriceSettingAdminService {
     }
 
     private ExpensePriceSetting lockPriceSetting(Long id) {
-        return priceSettingRepository.findByIdForUpdate(id == null ? -1L : id)
-                .orElseThrow(() -> notFound(
-                        "EXPENSE_PRICE_SETTING_NOT_FOUND",
-                        "Price setting not found: " + id
-                ));
+        try {
+            return priceSettingRepository.findByIdForUpdate(id == null ? -1L : id)
+                    .orElseThrow(() -> notFound(
+                            "EXPENSE_PRICE_SETTING_NOT_FOUND",
+                            "Price setting not found: " + id
+                    ));
+        } catch (OptimisticLockingFailureException exception) {
+            throw conflict(
+                    "EXPENSE_PRICE_SETTING_VERSION_CONFLICT",
+                    "Price setting version does not match"
+            );
+        }
     }
 
     private ExpenseType lockExpenseType(Long id) {
@@ -487,6 +490,13 @@ public class ExpensePriceSettingAdminService {
 
     private LocalDate today() {
         return LocalDate.now(clock);
+    }
+
+    private boolean isEffectiveOn(ExpensePriceSetting setting, LocalDate date) {
+        return Boolean.TRUE.equals(setting.getActive())
+                && !setting.getEffectiveFrom().isAfter(date)
+                && (setting.getEffectiveTo() == null
+                    || !setting.getEffectiveTo().isBefore(date));
     }
 
     private void recordAudit(

@@ -141,23 +141,6 @@ public interface ExpensePriceSettingRepository extends JpaRepository<ExpensePric
             from ExpensePriceSetting priceSetting
             where priceSetting.expenseType.id = :expenseTypeId
               and priceSetting.priceCode = :priceCode
-              and priceSetting.id <> :excludedId
-              and priceSetting.effectiveFrom <= coalesce(:newTo, priceSetting.effectiveFrom)
-              and coalesce(priceSetting.effectiveTo, :newFrom) >= :newFrom
-            """)
-    List<ExpensePriceSetting> findOverlappingPeriods(
-            @Param("expenseTypeId") Long expenseTypeId,
-            @Param("priceCode") String priceCode,
-            @Param("newFrom") LocalDate newFrom,
-            @Param("newTo") LocalDate newTo,
-            @Param("excludedId") Long excludedId
-    );
-
-    @Query("""
-            select priceSetting
-            from ExpensePriceSetting priceSetting
-            where priceSetting.expenseType.id = :expenseTypeId
-              and priceSetting.priceCode = :priceCode
               and priceSetting.active = true
               and priceSetting.id <> :excludedId
               and priceSetting.effectiveFrom <= coalesce(:newTo, priceSetting.effectiveFrom)

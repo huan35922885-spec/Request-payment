@@ -192,10 +192,13 @@ class ExpensePriceSettingAdminServiceTest {
     void deactivationChecksCurrentOnlyWhenParentIsActive() {
         ExpenseType activeType = type(6L, "MEAL", CalculationType.MEAL, true);
         ExpensePriceSetting current = price(60L, activeType, "DEFAULT", true, 1L, TODAY);
+        ExpensePriceSetting otherPrice = price(
+                61L, activeType, "REGISTERED_MAIL", true, 1L, TODAY
+        );
         when(priceRepository.findById(60L)).thenReturn(Optional.of(current));
         when(priceRepository.findByIdForUpdate(60L)).thenReturn(Optional.of(current));
         when(typeRepository.findByIdForUpdate(6L)).thenReturn(Optional.of(activeType));
-        when(priceRepository.findEffectivePriceSettings(6L, "DEFAULT", TODAY))
+        when(priceRepository.findEffectivePrices(6L, TODAY))
                 .thenReturn(List.of(current));
         ExpensePriceSettingAdminBusinessException required = assertThrows(
                 ExpensePriceSettingAdminBusinessException.class,
@@ -205,7 +208,8 @@ class ExpensePriceSettingAdminServiceTest {
         );
         assertEquals("EXPENSE_PRICE_CURRENT_REQUIRED", required.getCode());
 
-        activeType.setActive(false);
+        when(priceRepository.findEffectivePrices(6L, TODAY))
+                .thenReturn(List.of(current, otherPrice));
         when(priceRepository.saveAndFlush(current))
                 .thenAnswer(invocation -> persist(invocation.getArgument(0), 60L, 2L));
         ExpensePriceSettingAdminResponse response = service.deactivate(
@@ -213,6 +217,22 @@ class ExpensePriceSettingAdminServiceTest {
         );
         assertFalse(response.active());
         assertEquals("retire", capturedAudits().get(0).reason());
+
+        ExpensePriceSetting inactiveParentTarget = price(
+                62L, activeType, "DEFAULT", true, 1L, TODAY
+        );
+        activeType.setActive(false);
+        when(priceRepository.findById(62L)).thenReturn(Optional.of(inactiveParentTarget));
+        when(priceRepository.findByIdForUpdate(62L))
+                .thenReturn(Optional.of(inactiveParentTarget));
+        when(priceRepository.saveAndFlush(inactiveParentTarget))
+                .thenAnswer(invocation -> persist(invocation.getArgument(0), 62L, 2L));
+        ExpensePriceSettingAdminResponse inactiveParentResponse = service.deactivate(
+                62L, new DeactivateExpensePriceSettingRequest(1L, " inactive parent "), ACTOR_ID
+        );
+        assertFalse(inactiveParentResponse.active());
+        verify(priceRepository, org.mockito.Mockito.times(2))
+                .findEffectivePrices(6L, TODAY);
     }
 
     @Test
