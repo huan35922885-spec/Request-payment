@@ -23,6 +23,7 @@ import org.springframework.boot.webmvc.test.autoconfigure.WebMvcTest;
 import org.springframework.context.annotation.Import;
 import org.springframework.core.MethodParameter;
 import org.springframework.http.MediaType;
+import org.springframework.mock.web.MockMultipartFile;
 import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
@@ -32,6 +33,7 @@ import org.springframework.web.context.request.NativeWebRequest;
 import org.springframework.web.method.support.HandlerMethodArgumentResolver;
 import org.springframework.web.method.support.ModelAndViewContainer;
 import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
+import org.springframework.web.multipart.MultipartFile;
 import tw.com.jsgcpa.paymentapproval.approval.enums.ApprovalStatus;
 import tw.com.jsgcpa.paymentapproval.approval.enums.ApprovalAction;
 import tw.com.jsgcpa.paymentapproval.common.exception.GlobalExceptionHandler;
@@ -66,6 +68,7 @@ import tw.com.jsgcpa.paymentapproval.payment.service.ListPaymentRequestsService;
 import tw.com.jsgcpa.paymentapproval.security.authentication.AuthenticatedUserPrincipal;
 import org.springframework.test.web.servlet.request.MockMvcRequestBuilders;
 import org.springframework.test.web.servlet.result.MockMvcResultMatchers;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.multipart;
 
 @WebMvcTest(PaymentRequestController.class)
 @Import({GlobalExceptionHandler.class, PaymentRequestControllerTest.MvcTestConfiguration.class})
@@ -782,6 +785,110 @@ class PaymentRequestControllerTest {
                 recordRequest(3L, PAYMENT_PAID_AT, PaymentMethod.BANK_TRANSFER,
                         "E2E-TRANSFER-001", "已完成銀行轉帳")
         );
+    }
+
+    @Test
+    void recordsPaymentThroughMultipartRequestAndProofParts() throws Exception {
+        when(recordPaymentService.recordPayment(
+                eq(5L),
+                any(RecordPaymentRequest.class),
+                any(MultipartFile.class),
+                eq(1L)
+        )).thenReturn(recordPaymentResponse());
+
+        MockMultipartFile requestPart = new MockMultipartFile(
+                "request",
+                "",
+                MediaType.APPLICATION_JSON_VALUE,
+                "{\"version\":3,\"paidAt\":\"2026-07-31T13:30:00+08:00\",\"paymentMethod\":\"BANK_TRANSFER\"}"
+                        .getBytes()
+        );
+        MockMultipartFile proofPart = new MockMultipartFile(
+                "file",
+                "payment-proof.pdf",
+                MediaType.APPLICATION_PDF_VALUE,
+                new byte[]{0x25, 0x50, 0x44, 0x46}
+        );
+
+        mockMvc.perform(multipart("/api/payment-requests/5/record-payment")
+                        .file(requestPart)
+                        .file(proofPart)
+                        .with(org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.csrf()))
+                .andExpect(MockMvcResultMatchers.status().isOk())
+                .andExpect(MockMvcResultMatchers.jsonPath("$.action")
+                        .value("PAYMENT_RECORDED"));
+
+        verify(recordPaymentService).recordPayment(
+                eq(5L),
+                any(RecordPaymentRequest.class),
+                any(MultipartFile.class),
+                eq(1L)
+        );
+    }
+
+    @Test
+    void missingPaymentProofIsMappedTo400() throws Exception {
+        when(recordPaymentService.recordPayment(
+                eq(5L), any(RecordPaymentRequest.class), eq(null), eq(1L)
+        )).thenThrow(new PaymentDraftBusinessException(
+                "PAYMENT_PROOF_REQUIRED", "Payment proof file is required"
+        ));
+
+        MockMultipartFile requestPart = new MockMultipartFile(
+                "request", "request.json", MediaType.APPLICATION_JSON_VALUE,
+                "{\"version\":3,\"paidAt\":\"2026-07-31T13:30:00+08:00\"}".getBytes()
+        );
+
+        mockMvc.perform(multipart("/api/payment-requests/5/record-payment")
+                        .file(requestPart)
+                        .with(org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.csrf()))
+                .andExpect(MockMvcResultMatchers.status().isBadRequest())
+                .andExpect(MockMvcResultMatchers.jsonPath("$.code")
+                        .value("PAYMENT_PROOF_REQUIRED"));
+
+        verify(recordPaymentService).recordPayment(
+                eq(5L), any(RecordPaymentRequest.class), eq(null), eq(1L)
+        );
+    }
+
+    @Test
+    void missingRequestPartIsMappedToInvalidRequestBody() throws Exception {
+        MockMultipartFile proofPart = new MockMultipartFile(
+                "file", "payment-proof.pdf", MediaType.APPLICATION_PDF_VALUE,
+                new byte[]{0x25, 0x50, 0x44, 0x46}
+        );
+
+        mockMvc.perform(multipart("/api/payment-requests/5/record-payment")
+                        .file(proofPart)
+                        .with(org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.csrf()))
+                .andExpect(MockMvcResultMatchers.status().isBadRequest())
+                .andExpect(MockMvcResultMatchers.jsonPath("$.code")
+                        .value("INVALID_REQUEST_BODY"));
+
+        verify(recordPaymentService, never()).recordPayment(
+                any(Long.class), any(RecordPaymentRequest.class),
+                any(MultipartFile.class), any(Long.class)
+        );
+    }
+
+    @Test
+    void invalidRequestPartJsonIsMappedToInvalidRequestBody() throws Exception {
+        MockMultipartFile requestPart = new MockMultipartFile(
+                "request", "request.json", MediaType.APPLICATION_JSON_VALUE,
+                "not-json".getBytes()
+        );
+        MockMultipartFile proofPart = new MockMultipartFile(
+                "file", "payment-proof.pdf", MediaType.APPLICATION_PDF_VALUE,
+                new byte[]{0x25, 0x50, 0x44, 0x46}
+        );
+
+        mockMvc.perform(multipart("/api/payment-requests/5/record-payment")
+                        .file(requestPart)
+                        .file(proofPart)
+                        .with(org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.csrf()))
+                .andExpect(MockMvcResultMatchers.status().isBadRequest())
+                .andExpect(MockMvcResultMatchers.jsonPath("$.code")
+                        .value("INVALID_REQUEST_BODY"));
     }
 
     @Test

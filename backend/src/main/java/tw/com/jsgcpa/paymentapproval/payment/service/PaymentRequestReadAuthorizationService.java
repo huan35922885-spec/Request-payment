@@ -154,7 +154,8 @@ public class PaymentRequestReadAuthorizationService {
 
         return hasPaymentOperatorAuthority
                 && paymentRequest.getApprovalStatus() == ApprovalStatus.APPROVED
-                && paymentRequest.getPaymentStatus() == PaymentStatus.UNPAID;
+                && (paymentRequest.getPaymentStatus() == PaymentStatus.UNPAID
+                || paymentRequest.getPaymentStatus() == PaymentStatus.PAID);
     }
 
     private void requireAuthenticatedUser(Long authenticatedUserId) {
