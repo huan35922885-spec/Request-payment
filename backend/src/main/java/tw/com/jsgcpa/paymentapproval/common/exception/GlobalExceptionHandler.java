@@ -16,6 +16,7 @@ import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
 import org.springframework.web.bind.MissingServletRequestParameterException;
 import org.springframework.web.multipart.MaxUploadSizeExceededException;
+import org.springframework.web.multipart.support.MissingServletRequestPartException;
 import tw.com.jsgcpa.paymentapproval.common.api.ApiErrorResponse;
 import tw.com.jsgcpa.paymentapproval.common.api.FieldValidationError;
 import tw.com.jsgcpa.paymentapproval.attachment.exception.AttachmentStorageException;
@@ -209,6 +210,20 @@ public class GlobalExceptionHandler {
         );
     }
 
+    @ExceptionHandler(MissingServletRequestPartException.class)
+    public ResponseEntity<ApiErrorResponse> handleMissingRequestPart(
+            MissingServletRequestPartException exception,
+            HttpServletRequest request
+    ) {
+        return errorResponse(
+                HttpStatus.BAD_REQUEST,
+                "INVALID_REQUEST_BODY",
+                "Request body is missing or invalid",
+                request,
+                List.of()
+        );
+    }
+
     @ExceptionHandler(PaymentDraftBusinessException.class)
     public ResponseEntity<ApiErrorResponse> handleBusinessException(
             PaymentDraftBusinessException exception,
@@ -358,6 +373,7 @@ public class GlobalExceptionHandler {
                     "PAYMENT_REQUEST_NOT_PENDING_CASHIER",
                     "PAYMENT_REQUEST_NOT_APPROVED",
                     "PAYMENT_REQUEST_ALREADY_PAID",
+                    "PAYMENT_PROOF_ALREADY_EXISTS",
                     "CASHIER_INACTIVE",
                     "PAID_BY_INACTIVE",
                     "SUPERVISOR_SNAPSHOT_MISSING",
