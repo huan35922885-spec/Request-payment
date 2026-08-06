@@ -236,6 +236,55 @@ class ExpensePriceSettingAdminServiceTest {
     }
 
     @Test
+    void deactivatesFuturePriceWithoutCurrentPriceCheck() {
+        ExpenseType type = type(10L, "MEAL", CalculationType.MEAL, true);
+        ExpensePriceSetting future = price(
+                100L, type, "DEFAULT", true, 1L, TODAY.plusDays(1)
+        );
+        when(priceRepository.findById(100L)).thenReturn(Optional.of(future));
+        when(priceRepository.findByIdForUpdate(100L)).thenReturn(Optional.of(future));
+        when(typeRepository.findByIdForUpdate(10L)).thenReturn(Optional.of(type));
+        when(priceRepository.saveAndFlush(future))
+                .thenAnswer(invocation -> persist(invocation.getArgument(0), 100L, 2L));
+
+        ExpensePriceSettingAdminResponse response = service.deactivate(
+                100L,
+                new DeactivateExpensePriceSettingRequest(1L, " retire future "),
+                ACTOR_ID
+        );
+
+        assertFalse(response.active());
+        assertEquals(2L, response.version());
+        assertEquals("retire future", capturedAudits().get(0).reason());
+        verify(priceRepository, never()).findEffectivePrices(any(), any());
+    }
+
+    @Test
+    void deactivatesExpiredPriceWithoutCurrentPriceCheck() {
+        ExpenseType type = type(11L, "MEAL", CalculationType.MEAL, true);
+        ExpensePriceSetting expired = price(
+                110L, type, "DEFAULT", true, 1L, TODAY.minusDays(10)
+        );
+        expired.setEffectiveTo(TODAY.minusDays(1));
+        when(priceRepository.findById(110L)).thenReturn(Optional.of(expired));
+        when(priceRepository.findByIdForUpdate(110L)).thenReturn(Optional.of(expired));
+        when(typeRepository.findByIdForUpdate(11L)).thenReturn(Optional.of(type));
+        when(priceRepository.saveAndFlush(expired))
+                .thenAnswer(invocation -> persist(invocation.getArgument(0), 110L, 2L));
+
+        ExpensePriceSettingAdminResponse response = service.deactivate(
+                110L,
+                new DeactivateExpensePriceSettingRequest(1L, " retire expired "),
+                ACTOR_ID
+        );
+
+        assertFalse(response.active());
+        assertEquals(2L, response.version());
+        assertEquals("retire expired", capturedAudits().get(0).reason());
+        verify(priceRepository, never()).findEffectivePrices(any(), any());
+    }
+
+    @Test
     void effectiveUsesRequestedPriceCodeAndMapsNotFound() {
         ExpenseType type = type(7L, "CONFIRMATION", CalculationType.CONFIRMATION, true);
         ExpensePriceSetting setting = price(70L, type, "NORMAL_MAIL", true, 0L, TODAY);

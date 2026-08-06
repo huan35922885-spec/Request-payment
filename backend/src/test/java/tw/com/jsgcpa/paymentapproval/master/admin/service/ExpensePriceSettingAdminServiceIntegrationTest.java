@@ -1,6 +1,7 @@
 package tw.com.jsgcpa.paymentapproval.master.admin.service;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.math.BigDecimal;
@@ -47,7 +48,7 @@ class ExpensePriceSettingAdminServiceIntegrationTest {
     @Autowired private PlatformTransactionManager transactionManager;
 
     @Test
-    void postgresLifecycleMultiPriceAndConcurrentReplace() throws Exception {
+    void postgresLifecycleUsesHistoricalRowsAndAudit() {
         LocalDate today = LocalDate.now(ZoneId.of("Asia/Taipei"));
         Long actorId = createActor();
 
@@ -105,7 +106,12 @@ class ExpensePriceSettingAdminServiceIntegrationTest {
         assertEquals("EXPENSE_PRICE_CREATE", lifecycleAudits.get(0).getAction().name());
         assertEquals("EXPENSE_PRICE_REPLACE", lifecycleAudits.get(1).getAction().name());
         assertTrue(!lifecycleAudits.get(1).getAfterData().containsKey("version"));
+    }
 
+    @Test
+    void postgresMultiPriceDeactivationPreservesLastCurrentPrice() {
+        LocalDate today = LocalDate.now(ZoneId.of("Asia/Taipei"));
+        Long actorId = createActor();
         Long confirmationTypeId = createExpenseType(
                 "CONFIRMATION", "PostgreSQL multi-price test", true
         );
@@ -128,19 +134,54 @@ class ExpensePriceSettingAdminServiceIntegrationTest {
                         normal.version(), " retire normal "
                 ), actorId
         ));
+        assertEquals(1L, deactivatedNormal.version());
         assertEquals(false, deactivatedNormal.active());
         assertEquals(registered.id(), inTransaction(() -> service.effective(
                 confirmationTypeId, "REGISTERED_MAIL", today
         )).id());
-        var registeredStillActive = inTransaction(
+        var registeredBefore = inTransaction(
                 () -> priceSettingRepository.findById(registered.id()).orElseThrow()
         );
-        assertTrue(registeredStillActive.getActive());
+        int registeredAuditCountBefore = inTransaction(() -> auditLogRepository
+                .findByTargetTypeAndTargetIdOrderByCreatedAtAscIdAsc(
+                        MasterDataAuditTargetType.EXPENSE_PRICE_SETTING, registered.id()
+                )).size();
         assertTrue(inTransaction(() -> auditLogRepository
                 .findByTargetTypeAndTargetIdOrderByCreatedAtAscIdAsc(
                         MasterDataAuditTargetType.EXPENSE_PRICE_SETTING, normal.id()
                 )).stream().anyMatch(audit -> "retire normal".equals(audit.getReason())));
 
+        ExpensePriceSettingAdminBusinessException required = assertThrows(
+                ExpensePriceSettingAdminBusinessException.class,
+                () -> inTransaction(() -> service.deactivate(
+                        registered.id(),
+                        new DeactivateExpensePriceSettingRequest(
+                                registeredBefore.getVersion(), " retire registered "
+                        ),
+                        actorId
+                ))
+        );
+        assertEquals("EXPENSE_PRICE_CURRENT_REQUIRED", required.getCode());
+
+        var registeredAfter = inTransaction(
+                () -> priceSettingRepository.findById(registered.id()).orElseThrow()
+        );
+        assertTrue(registeredAfter.getActive());
+        assertEquals(registeredBefore.getVersion(), registeredAfter.getVersion());
+        assertEquals(registeredAuditCountBefore, inTransaction(() -> auditLogRepository
+                .findByTargetTypeAndTargetIdOrderByCreatedAtAscIdAsc(
+                        MasterDataAuditTargetType.EXPENSE_PRICE_SETTING, registered.id()
+                )).size());
+        var confirmationType = inTransaction(
+                () -> expenseTypeRepository.findById(confirmationTypeId).orElseThrow()
+        );
+        assertTrue(confirmationType.getActive());
+    }
+
+    @Test
+    void concurrentReplaceAllowsOneCompleteWinner() throws Exception {
+        LocalDate today = LocalDate.now(ZoneId.of("Asia/Taipei"));
+        Long actorId = createActor();
         Long concurrentTypeId = createExpenseType(
                 "MEAL", "PostgreSQL concurrent replace test", true
         );
@@ -193,6 +234,14 @@ class ExpensePriceSettingAdminServiceIntegrationTest {
         assertEquals(2, concurrentRows.size());
         assertEquals(1, concurrentRows.stream()
                 .filter(row -> row.getEffectiveTo() != null).count());
+        assertEquals(1, concurrentRows.stream()
+                .filter(row -> row.getId().equals(concurrentOriginal.id())
+                        && row.getEffectiveTo() != null)
+                .count());
+        assertEquals(1, concurrentRows.stream()
+                .filter(row -> !row.getId().equals(concurrentOriginal.id())
+                        && row.getActive())
+                .count());
         var concurrentAudits = inTransaction(() -> auditLogRepository
                 .findByTargetTypeAndTargetIdOrderByCreatedAtAscIdAsc(
                         MasterDataAuditTargetType.EXPENSE_PRICE_SETTING,
@@ -203,8 +252,13 @@ class ExpensePriceSettingAdminServiceIntegrationTest {
                 .filter(audit -> audit.getAction() == MasterDataAuditAction.EXPENSE_PRICE_REPLACE)
                 .findFirst()
                 .orElseThrow();
-        assertEquals(2, inTransaction(() -> auditLogRepository
-                .findByOperationIdOrderByIdAsc(replaceAudit.getOperationId())).size());
+        var operationAudits = inTransaction(() -> auditLogRepository
+                .findByOperationIdOrderByIdAsc(replaceAudit.getOperationId()));
+        assertEquals(2, operationAudits.size());
+        assertTrue(operationAudits.stream()
+                .allMatch(audit -> audit.getAction() == MasterDataAuditAction.EXPENSE_PRICE_REPLACE));
+        assertEquals(operationAudits.get(0).getOperationId(),
+                operationAudits.get(1).getOperationId());
     }
 
     private Long createActor() {
