@@ -97,18 +97,6 @@ class DatabaseUserDetailsServiceTest {
     }
 
     @Test
-    void mapsPaymentOperatorAuthorityWithoutRolePrefix() {
-        when(user.getActive()).thenReturn(true);
-        when(paymentOperatorRole.getRoleCode())
-                .thenReturn(SecurityRole.PAYMENT_OPERATOR);
-        stubRoles(paymentOperatorRole);
-
-        AuthenticatedUserPrincipal principal = loadPrincipal();
-
-        assertEquals(List.of("PAYMENT_OPERATOR"), authorityNames(principal));
-    }
-
-    @Test
     void mapsMasterDataAdminAuthorityWithoutRolePrefixOrOtherAuthorities() {
         when(user.getActive()).thenReturn(true);
         when(masterDataAdminRole.getRoleCode())
@@ -124,22 +112,6 @@ class DatabaseUserDetailsServiceTest {
         assertFalse(authorityNames(principal).contains("ROLE_MASTER_DATA_ADMIN"));
         assertFalse(authorityNames(principal).contains("CASHIER"));
         assertFalse(authorityNames(principal).contains("PAYMENT_OPERATOR"));
-    }
-
-    @Test
-    void mapsBothAuthoritiesInRepositoryOrder() {
-        when(user.getActive()).thenReturn(true);
-        when(cashierRole.getRoleCode()).thenReturn(SecurityRole.CASHIER);
-        when(paymentOperatorRole.getRoleCode())
-                .thenReturn(SecurityRole.PAYMENT_OPERATOR);
-        stubRoles(cashierRole, paymentOperatorRole);
-
-        AuthenticatedUserPrincipal principal = loadPrincipal();
-
-        assertEquals(
-                List.of("CASHIER", "PAYMENT_OPERATOR"),
-                authorityNames(principal)
-        );
     }
 
     @Test

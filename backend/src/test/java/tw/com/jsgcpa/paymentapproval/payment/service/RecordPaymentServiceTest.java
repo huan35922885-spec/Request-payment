@@ -7,7 +7,6 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.never;
-import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
@@ -18,6 +17,7 @@ import java.time.Instant;
 import java.time.OffsetDateTime;
 import java.time.ZoneId;
 import java.util.Optional;
+import java.util.List;
 
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -36,20 +36,14 @@ import tw.com.jsgcpa.paymentapproval.approval.enums.ApprovalAction;
 import tw.com.jsgcpa.paymentapproval.approval.enums.ApprovalStatus;
 import tw.com.jsgcpa.paymentapproval.approval.repository.ApprovalHistoryRepository;
 import tw.com.jsgcpa.paymentapproval.attachment.storage.AttachmentStorageService;
-import tw.com.jsgcpa.paymentapproval.attachment.storage.StoredAttachmentFile;
-import tw.com.jsgcpa.paymentapproval.attachment.validation.AttachmentFileValidator;
-import tw.com.jsgcpa.paymentapproval.attachment.validation.ValidatedAttachmentFile;
 import tw.com.jsgcpa.paymentapproval.organization.entity.AppUser;
 import tw.com.jsgcpa.paymentapproval.organization.repository.AppUserRepository;
 import tw.com.jsgcpa.paymentapproval.payment.dto.request.RecordPaymentRequest;
 import tw.com.jsgcpa.paymentapproval.payment.dto.response.RecordPaymentResponse;
 import tw.com.jsgcpa.paymentapproval.payment.entity.PaymentRequest;
-import tw.com.jsgcpa.paymentapproval.payment.entity.PaymentRequestAttachment;
-import tw.com.jsgcpa.paymentapproval.payment.enums.AttachmentType;
 import tw.com.jsgcpa.paymentapproval.payment.enums.PaymentMethod;
 import tw.com.jsgcpa.paymentapproval.payment.enums.PaymentStatus;
 import tw.com.jsgcpa.paymentapproval.payment.exception.PaymentDraftBusinessException;
-import tw.com.jsgcpa.paymentapproval.payment.repository.PaymentRequestAttachmentRepository;
 import tw.com.jsgcpa.paymentapproval.payment.repository.PaymentRequestRepository;
 
 @ExtendWith(MockitoExtension.class)
@@ -63,15 +57,12 @@ class RecordPaymentServiceTest {
     @Mock private PaymentRequestRepository paymentRequestRepository;
     @Mock private AppUserRepository appUserRepository;
     @Mock private ApprovalHistoryRepository approvalHistoryRepository;
-    @Mock private PaymentRequestAttachmentRepository attachmentRepository;
-    @Mock private AttachmentFileValidator validator;
+    @Mock private PaymentMaintenanceService paymentMaintenanceService;
     @Mock private AttachmentStorageService storage;
     @Mock private TransactionRollbackCleanupRegistrar cleanupRegistrar;
 
     private RecordPaymentService service;
     private MultipartFile file;
-    private ValidatedAttachmentFile validatedFile;
-    private StoredAttachmentFile storedFile;
     private AppUser operator;
 
     @BeforeEach
@@ -80,8 +71,7 @@ class RecordPaymentServiceTest {
                 paymentRequestRepository,
                 appUserRepository,
                 approvalHistoryRepository,
-                attachmentRepository,
-                validator,
+                paymentMaintenanceService,
                 storage,
                 cleanupRegistrar,
                 Clock.fixed(
@@ -91,12 +81,6 @@ class RecordPaymentServiceTest {
         );
         file = new MockMultipartFile(
                 "file", "payment-proof.pdf", "application/pdf", "%PDF".getBytes()
-        );
-        validatedFile = new ValidatedAttachmentFile(
-                "payment-proof.pdf", "application/pdf", "pdf", 4L, "%PDF".getBytes()
-        );
-        storedFile = new StoredAttachmentFile(
-                "stored-proof.pdf", "payment-requests/1/stored-proof.pdf", 4L, "application/pdf"
         );
         operator = user(9L, "Payment Operator");
     }
@@ -120,11 +104,13 @@ class RecordPaymentServiceTest {
         assertEquals(ApprovalAction.PAYMENT_RECORDED, response.action());
         assertEquals(RECORDED_AT, response.recordedAt());
         assertEquals(4L, response.version());
-        verify(storage, never()).delete(any());
+        verify(paymentMaintenanceService).persistProofFiles(
+                eq(paymentRequest), any(), eq(operator)
+        );
     }
 
     @Test
-    void createsCompletePaymentRecordedHistoryAndProofMetadata() {
+    void createsCompletePaymentRecordedHistory() {
         PaymentRequest paymentRequest = approvedUnpaidRequest();
         stubValidOperation(paymentRequest);
 
@@ -140,28 +126,28 @@ class RecordPaymentServiceTest {
         assertEquals("proof note", history.getComment());
         assertEquals(RECORDED_AT, history.getActedAt());
 
-        PaymentRequestAttachment attachment = capturedAttachment();
-        assertSame(paymentRequest, attachment.getPaymentRequest());
-        assertSame(operator, attachment.getUploadedBy());
-        assertEquals(AttachmentType.PAYMENT_PROOF, attachment.getAttachmentType());
-        assertEquals("payment-proof.pdf", attachment.getOriginalFilename());
-        assertEquals(storedFile.relativeStoragePath(), attachment.getStoragePath());
-        assertEquals(4L, attachment.getFileSize());
+        verify(paymentMaintenanceService).persistProofFiles(
+                eq(paymentRequest),
+                any(),
+                eq(operator)
+        );
     }
 
     @Test
-    void flushesProofPaymentAndHistoryInOrder() {
+    void flushesPaymentAndHistoryInOrder() {
         PaymentRequest paymentRequest = approvedUnpaidRequest();
         stubValidOperation(paymentRequest);
 
         service.recordPayment(1L, paymentRequest(), file, 9L);
 
         InOrder order = inOrder(
-                attachmentRepository,
+                paymentMaintenanceService,
                 paymentRequestRepository,
                 approvalHistoryRepository
         );
-        order.verify(attachmentRepository).saveAndFlush(any(PaymentRequestAttachment.class));
+        order.verify(paymentMaintenanceService).persistProofFiles(
+                eq(paymentRequest), any(), eq(operator)
+        );
         order.verify(paymentRequestRepository).saveAndFlush(paymentRequest);
         order.verify(approvalHistoryRepository).saveAndFlush(any(ApprovalHistory.class));
     }
@@ -202,7 +188,7 @@ class RecordPaymentServiceTest {
                 service.recordPayment(1L, paymentRequest(), file, 9L));
 
         verify(appUserRepository, never()).findById(any());
-        verify(storage, never()).store(any(), any());
+        verify(paymentMaintenanceService, never()).persistProofFiles(any(), any(), any());
         verifyNoWrites();
     }
 
@@ -216,35 +202,16 @@ class RecordPaymentServiceTest {
                         2L, PAID_AT, null, null, null
                 ), file, 9L));
 
-        verify(storage, never()).store(any(), any());
+        verify(paymentMaintenanceService, never()).persistProofFiles(any(), any(), any());
         verify(appUserRepository, never()).findById(any());
     }
 
     @Test
-    void rejectsMissingProofBeforeDuplicateCheckAndStorage() {
-        PaymentRequest paymentRequest = approvedUnpaidRequest();
-        when(paymentRequestRepository.findById(1L)).thenReturn(Optional.of(paymentRequest));
-
+    void rejectsMissingProofBeforePersist() {
         assertCode("PAYMENT_PROOF_REQUIRED", () ->
-                service.recordPayment(1L, paymentRequest(), null, 9L));
+                service.recordPayment(1L, paymentRequest(), List.of(), 9L));
 
-        verify(attachmentRepository, never()).existsByPaymentRequest_IdAndAttachmentType(any(), any());
-        verify(storage, never()).store(any(), any());
-    }
-
-    @Test
-    void rejectsDuplicateProofBeforeBinaryWrite() {
-        PaymentRequest paymentRequest = approvedUnpaidRequest();
-        when(paymentRequestRepository.findById(1L)).thenReturn(Optional.of(paymentRequest));
-        when(attachmentRepository.existsByPaymentRequest_IdAndAttachmentType(
-                1L, AttachmentType.PAYMENT_PROOF
-        )).thenReturn(true);
-
-        assertCode("PAYMENT_PROOF_ALREADY_EXISTS", () ->
-                service.recordPayment(1L, paymentRequest(), file, 9L));
-
-        verify(storage, never()).store(any(), any());
-        verify(appUserRepository, never()).findById(any());
+        verifyNoInteractions(paymentRequestRepository, paymentMaintenanceService);
     }
 
     @Test
@@ -261,7 +228,7 @@ class RecordPaymentServiceTest {
             assertCode("PAYMENT_REQUEST_NOT_APPROVED", () ->
                     service.recordPayment(1L, paymentRequest(), file, 9L));
         }
-        verify(storage, never()).store(any(), any());
+        verify(paymentMaintenanceService, never()).persistProofFiles(any(), any(), any());
     }
 
     @Test
@@ -281,7 +248,7 @@ class RecordPaymentServiceTest {
 
         assertSame(original, paymentRequest.getPaidBy());
         assertEquals("ORIGINAL", paymentRequest.getPaymentReference());
-        verify(storage, never()).store(any(), any());
+        verify(paymentMaintenanceService, never()).persistProofFiles(any(), any(), any());
     }
 
     @Test
@@ -296,43 +263,45 @@ class RecordPaymentServiceTest {
         when(appUserRepository.findById(9L)).thenReturn(Optional.of(operator));
         assertCode("PAID_BY_INACTIVE", () ->
                 service.recordPayment(1L, paymentRequest(), file, 9L));
-        verify(storage, never()).store(any(), any());
+        verify(paymentMaintenanceService, never()).persistProofFiles(any(), any(), any());
     }
 
     @Test
-    void cleansStoredProofWhenAttachmentSaveFails() {
+    void propagatesProofPersistFailureWithoutPaymentSave() {
         PaymentRequest paymentRequest = approvedUnpaidRequest();
-        stubBeforeMetadataSave(paymentRequest);
-        when(attachmentRepository.saveAndFlush(any(PaymentRequestAttachment.class)))
-                .thenThrow(new RuntimeException("metadata failure"));
+        stubPaymentAndDuplicateCheck(paymentRequest);
+        RuntimeException failure = new RuntimeException("proof persist failure");
+        org.mockito.Mockito.doThrow(failure).when(paymentMaintenanceService)
+                .persistProofFiles(eq(paymentRequest), any(), eq(operator));
 
-        RuntimeException exception = assertThrows(RuntimeException.class, () ->
-                service.recordPayment(1L, paymentRequest(), file, 9L));
+        assertSame(failure, assertThrows(RuntimeException.class, () ->
+                service.recordPayment(1L, paymentRequest(), file, 9L)));
 
-        assertEquals("metadata failure", exception.getMessage());
-        verify(storage).delete(storedFile.relativeStoragePath());
         verify(paymentRequestRepository, never()).saveAndFlush(any());
         verify(approvalHistoryRepository, never()).saveAndFlush(any());
     }
 
     @Test
-    void cleansStoredProofWhenPaymentOptimisticLockFailsAndCreatesNoHistory() {
+    void cleansUpOnPaymentOptimisticLockFailureAfterProofPersist() {
         PaymentRequest paymentRequest = approvedUnpaidRequest();
-        stubBeforePaymentSave(paymentRequest);
+        stubPaymentAndDuplicateCheck(paymentRequest);
+        org.mockito.Mockito.doNothing().when(paymentMaintenanceService)
+                .persistProofFiles(eq(paymentRequest), any(), eq(operator));
         when(paymentRequestRepository.saveAndFlush(any(PaymentRequest.class)))
                 .thenThrow(new OptimisticLockingFailureException("stale"));
 
         assertCode("PAYMENT_REQUEST_VERSION_CONFLICT", () ->
                 service.recordPayment(1L, paymentRequest(), file, 9L));
 
-        verify(storage).delete(storedFile.relativeStoragePath());
         verify(approvalHistoryRepository, never()).saveAndFlush(any());
     }
 
     @Test
-    void propagatesHistoryFailureAndCleansStoredProof() {
+    void propagatesHistoryFailureAfterProofPersist() {
         PaymentRequest paymentRequest = approvedUnpaidRequest();
-        stubBeforePaymentSave(paymentRequest);
+        stubPaymentAndDuplicateCheck(paymentRequest);
+        org.mockito.Mockito.doNothing().when(paymentMaintenanceService)
+                .persistProofFiles(eq(paymentRequest), any(), eq(operator));
         when(paymentRequestRepository.saveAndFlush(paymentRequest)).thenAnswer(invocation -> {
             setField(paymentRequest, "version", 4L);
             return paymentRequest;
@@ -344,53 +313,6 @@ class RecordPaymentServiceTest {
                 service.recordPayment(1L, paymentRequest(), file, 9L));
 
         assertEquals("history failure", exception.getMessage());
-        verify(storage).delete(storedFile.relativeStoragePath());
-    }
-
-    @Test
-    void cleansStoredProofWhenCleanupRegistrationFails() {
-        PaymentRequest paymentRequest = approvedUnpaidRequest();
-        stubBeforeMetadataSave(paymentRequest);
-        RuntimeException registrationFailure = new RuntimeException("registration failure");
-        org.mockito.Mockito.doThrow(registrationFailure)
-                .when(cleanupRegistrar).register(any(Runnable.class));
-
-        RuntimeException exception = assertThrows(RuntimeException.class, () ->
-                service.recordPayment(1L, paymentRequest(), file, 9L));
-
-        assertSame(registrationFailure, exception);
-        verify(storage).delete(storedFile.relativeStoragePath());
-        verify(attachmentRepository, never()).saveAndFlush(any());
-        verify(paymentRequestRepository, never()).saveAndFlush(any());
-        verify(approvalHistoryRepository, never()).saveAndFlush(any());
-    }
-
-    @Test
-    void propagatesFileValidationFailureWithoutStorageOrDatabaseWrites() {
-        PaymentRequest paymentRequest = approvedUnpaidRequest();
-        stubPaymentAndDuplicateCheck(paymentRequest);
-        RuntimeException validationFailure = new RuntimeException("invalid proof");
-        when(validator.validate(file)).thenThrow(validationFailure);
-
-        assertSame(validationFailure, assertThrows(RuntimeException.class, () ->
-                service.recordPayment(1L, paymentRequest(), file, 9L)));
-
-        verify(storage, never()).store(any(), any());
-        verifyNoWrites();
-    }
-
-    @Test
-    void propagatesStorageFailureWithoutDatabaseWrites() {
-        PaymentRequest paymentRequest = approvedUnpaidRequest();
-        stubPaymentAndDuplicateCheck(paymentRequest);
-        when(validator.validate(file)).thenReturn(validatedFile);
-        RuntimeException storageFailure = new RuntimeException("storage failure");
-        when(storage.store(1L, validatedFile)).thenThrow(storageFailure);
-
-        assertSame(storageFailure, assertThrows(RuntimeException.class, () ->
-                service.recordPayment(1L, paymentRequest(), file, 9L)));
-
-        verifyNoWrites();
     }
 
     @Test
@@ -414,29 +336,6 @@ class RecordPaymentServiceTest {
     }
 
     @Test
-    void cleanupRunsAtMostOnceAndPreservesCleanupFailure() {
-        PaymentRequest paymentRequest = approvedUnpaidRequest();
-        stubBeforeMetadataSave(paymentRequest);
-        RuntimeException metadataFailure = new RuntimeException("metadata failure");
-        when(attachmentRepository.saveAndFlush(any(PaymentRequestAttachment.class)))
-                .thenThrow(metadataFailure);
-        RuntimeException cleanupFailure = new RuntimeException("cleanup failure");
-        org.mockito.Mockito.doThrow(cleanupFailure)
-                .when(storage).delete(storedFile.relativeStoragePath());
-
-        RuntimeException exception = assertThrows(RuntimeException.class, () ->
-                service.recordPayment(1L, paymentRequest(), file, 9L));
-
-        assertSame(metadataFailure, exception);
-        assertEquals(1, exception.getSuppressed().length);
-        assertSame(cleanupFailure, exception.getSuppressed()[0]);
-        ArgumentCaptor<Runnable> cleanupCaptor = ArgumentCaptor.forClass(Runnable.class);
-        verify(cleanupRegistrar).register(cleanupCaptor.capture());
-        cleanupCaptor.getValue().run();
-        verify(storage, times(1)).delete(storedFile.relativeStoragePath());
-    }
-
-    @Test
     void validatesInvalidIdentifiersAndRequest() {
         assertCode("INVALID_PAYMENT_REQUEST_ID", () ->
                 service.recordPayment(0L, paymentRequest(), file, 9L));
@@ -457,20 +356,10 @@ class RecordPaymentServiceTest {
         stubBeforeHistorySave(request);
     }
 
-    private void stubBeforeMetadataSave(PaymentRequest request) {
-        stubPaymentAndDuplicateCheck(request);
-        when(validator.validate(file)).thenReturn(validatedFile);
-        when(storage.store(1L, validatedFile)).thenReturn(storedFile);
-    }
-
-    private void stubBeforePaymentSave(PaymentRequest request) {
-        stubBeforeMetadataSave(request);
-        when(attachmentRepository.saveAndFlush(any(PaymentRequestAttachment.class)))
-                .thenAnswer(invocation -> invocation.getArgument(0));
-    }
-
     private void stubBeforeHistorySave(PaymentRequest request) {
-        stubBeforePaymentSave(request);
+        stubPaymentAndDuplicateCheck(request);
+        org.mockito.Mockito.doNothing().when(paymentMaintenanceService)
+                .persistProofFiles(eq(request), any(), eq(operator));
         when(paymentRequestRepository.saveAndFlush(request)).thenAnswer(invocation -> {
             setField(request, "version", 4L);
             return request;
@@ -481,17 +370,7 @@ class RecordPaymentServiceTest {
 
     private void stubPaymentAndDuplicateCheck(PaymentRequest request) {
         when(paymentRequestRepository.findById(1L)).thenReturn(Optional.of(request));
-        when(attachmentRepository.existsByPaymentRequest_IdAndAttachmentType(
-                1L, AttachmentType.PAYMENT_PROOF
-        )).thenReturn(false);
         when(appUserRepository.findById(9L)).thenReturn(Optional.of(operator));
-    }
-
-    private PaymentRequestAttachment capturedAttachment() {
-        ArgumentCaptor<PaymentRequestAttachment> captor =
-                ArgumentCaptor.forClass(PaymentRequestAttachment.class);
-        verify(attachmentRepository).saveAndFlush(captor.capture());
-        return captor.getValue();
     }
 
     private ApprovalHistory capturedHistory() {
@@ -503,7 +382,7 @@ class RecordPaymentServiceTest {
 
     private void verifyNoWrites() {
         verify(paymentRequestRepository, never()).saveAndFlush(any());
-        verify(attachmentRepository, never()).saveAndFlush(any());
+        verify(paymentMaintenanceService, never()).persistProofFiles(any(), any(), any());
         verify(approvalHistoryRepository, never()).saveAndFlush(any());
     }
 

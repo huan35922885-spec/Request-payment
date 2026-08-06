@@ -89,10 +89,6 @@ public class ListPaymentRequestsService {
                 scope,
                 hasCashierAuthority
         );
-        readAuthorizationService.requirePaymentOperatorAuthority(
-                scope,
-                hasPaymentOperatorAuthority
-        );
         readAuthorizationService.validateSupervisorFilter(
                 scope,
                 query.supervisorId()

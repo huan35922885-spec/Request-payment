@@ -76,7 +76,7 @@ public class PaymentRequestAttachmentController {
                 attachmentId,
                 principal.getUserId(),
                 hasAuthority(principal, SecurityRole.CASHIER),
-                hasAuthority(principal, SecurityRole.PAYMENT_OPERATOR)
+                false
         );
 
         HttpHeaders headers = new HttpHeaders();

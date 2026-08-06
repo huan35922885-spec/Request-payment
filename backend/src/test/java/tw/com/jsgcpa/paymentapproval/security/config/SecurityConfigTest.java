@@ -72,7 +72,7 @@ class SecurityConfigTest {
 
         mockMvc.perform(get("/api/admin/master/expense-types")
                         .with(user("payment-operator")
-                                .authorities(new SimpleGrantedAuthority("PAYMENT_OPERATOR"))))
+                                .authorities(new SimpleGrantedAuthority("APPLICANT"))))
                 .andExpect(status().isForbidden())
                 .andExpect(jsonPath("$.code").value("ACCESS_DENIED"));
 
@@ -226,7 +226,7 @@ class SecurityConfigTest {
     }
 
     @Test
-    void recordPaymentPostRequiresPaymentOperatorWithCsrf() throws Exception {
+    void recordPaymentPostRequiresCashierWithCsrf() throws Exception {
         mockMvc.perform(post("/api/payment-requests/1/record-payment")
                         .with(csrf())
                         .contentType(MediaType.APPLICATION_JSON)

@@ -84,7 +84,7 @@ class AuthenticationControllerTest {
                 .andExpect(jsonPath("$.username").value("e2e.cashier"))
                 .andExpect(jsonPath("$.displayName").value("E2E 測試出納"))
                 .andExpect(jsonPath("$.roles[0]").value("CASHIER"))
-                .andExpect(jsonPath("$.roles[1]").value("PAYMENT_OPERATOR"));
+                .andExpect(jsonPath("$.roles", org.hamcrest.Matchers.hasSize(1)));
 
         verify(sessionAuthenticationStrategy).onAuthentication(
                 same(authentication),
@@ -173,8 +173,7 @@ class AuthenticationControllerTest {
                 "E2E 測試出納",
                 true,
                 List.of(
-                        new SimpleGrantedAuthority("CASHIER"),
-                        new SimpleGrantedAuthority("PAYMENT_OPERATOR")
+                        new SimpleGrantedAuthority("CASHIER")
                 )
         );
         SecurityContext context = SecurityContextHolder.createEmptyContext();
@@ -221,8 +220,7 @@ class AuthenticationControllerTest {
                 "e2e.cashier",
                 "E2E 測試出納",
                 List.of(
-                        tw.com.jsgcpa.paymentapproval.security.enums.SecurityRole.CASHIER,
-                        tw.com.jsgcpa.paymentapproval.security.enums.SecurityRole.PAYMENT_OPERATOR
+                        tw.com.jsgcpa.paymentapproval.security.enums.SecurityRole.CASHIER
                 )
         );
     }

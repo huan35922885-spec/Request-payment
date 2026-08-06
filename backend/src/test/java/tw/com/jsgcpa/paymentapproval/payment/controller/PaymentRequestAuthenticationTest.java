@@ -120,7 +120,7 @@ class PaymentRequestAuthenticationTest {
                                     org.springframework.http.HttpMethod.POST,
                                     "/api/payment-requests/*/record-payment"
                             )
-                            .hasAuthority("PAYMENT_OPERATOR")
+                            .hasAuthority("CASHIER")
                             .requestMatchers(
                                     org.springframework.http.HttpMethod.GET,
                                     "/api/payment-requests"
@@ -185,16 +185,15 @@ class PaymentRequestAuthenticationTest {
 
     @Test
     void authenticatedDetailPassesPrincipalAndAuthorityFlags() throws Exception {
-        when(getPaymentRequestDetailService.getDetail(5L, 1L, true, true))
+        when(getPaymentRequestDetailService.getDetail(5L, 1L, true, false))
                 .thenReturn(null);
 
         mockMvc.perform(get("/api/payment-requests/5")
-                        .with(user(principalWithAuthorities(
-                                1L, "CASHIER", "PAYMENT_OPERATOR"))))
+                        .with(user(principalWithAuthorities(1L, "CASHIER"))))
                 .andExpect(status().isOk());
 
         verify(getPaymentRequestDetailService)
-                .getDetail(5L, 1L, true, true);
+                .getDetail(5L, 1L, true, false);
     }
 
     @Test
@@ -256,33 +255,33 @@ class PaymentRequestAuthenticationTest {
     }
 
     @Test
-    void paymentOperatorCanQueryPaymentPendingWithoutCsrf() throws Exception {
+    void cashierCanQueryPaymentPendingWithoutCsrf() throws Exception {
         when(listPaymentRequestsService.list(
                 any(PaymentRequestListQuery.class),
                 eq(PaymentRequestListScope.PAYMENT_PENDING),
                 eq(6L),
-                eq(false),
-                eq(true)
+                eq(true),
+                eq(false)
         )).thenReturn(new PaymentRequestPageResponse(
                 List.of(), 0, 20, 0, 0, true, true
         ));
 
         mockMvc.perform(get("/api/payment-requests")
                         .param("scope", "PAYMENT_PENDING")
-                        .with(user(principalWithAuthorities(6L, "PAYMENT_OPERATOR"))))
+                        .with(user(principalWithAuthorities(6L, "CASHIER"))))
                 .andExpect(status().isOk());
 
         verify(listPaymentRequestsService).list(
                 any(PaymentRequestListQuery.class),
                 eq(PaymentRequestListScope.PAYMENT_PENDING),
                 eq(6L),
-                eq(false),
-                eq(true)
+                eq(true),
+                eq(false)
         );
     }
 
     @Test
-    void authenticatedNonPaymentOperatorCannotQueryPaymentPending() throws Exception {
+    void authenticatedNonCashierCannotQueryPaymentPending() throws Exception {
         when(listPaymentRequestsService.list(
                 any(PaymentRequestListQuery.class),
                 eq(PaymentRequestListScope.PAYMENT_PENDING),
@@ -403,13 +402,13 @@ class PaymentRequestAuthenticationTest {
     }
 
     @Test
-    void paymentOperatorOnlyUserCannotQueryCashierPending() throws Exception {
+    void applicantOnlyUserCannotQueryCashierPending() throws Exception {
         when(listPaymentRequestsService.list(
                 any(PaymentRequestListQuery.class),
                 eq(PaymentRequestListScope.CASHIER_PENDING),
                 eq(6L),
                 eq(false),
-                eq(true)
+                eq(false)
         )).thenThrow(new tw.com.jsgcpa.paymentapproval.payment.exception
                 .PaymentDraftBusinessException(
                         "PAYMENT_REQUEST_LIST_SCOPE_FORBIDDEN",
@@ -418,7 +417,7 @@ class PaymentRequestAuthenticationTest {
 
         mockMvc.perform(get("/api/payment-requests")
                         .param("scope", "CASHIER_PENDING")
-                        .with(user(principalWithAuthorities(6L, "PAYMENT_OPERATOR"))))
+                        .with(user(principal(6L))))
                 .andExpect(status().isForbidden())
                 .andExpect(jsonPath("$.code")
                         .value("PAYMENT_REQUEST_LIST_SCOPE_FORBIDDEN"));
@@ -428,7 +427,7 @@ class PaymentRequestAuthenticationTest {
                 eq(PaymentRequestListScope.CASHIER_PENDING),
                 eq(6L),
                 eq(false),
-                eq(true)
+                eq(false)
         );
     }
 
@@ -753,12 +752,9 @@ class PaymentRequestAuthenticationTest {
     }
 
     @Test
-    void paymentOperatorDoesNotHaveCashierAuthority() throws Exception {
+    void applicantDoesNotHaveCashierAuthority() throws Exception {
         mockMvc.perform(post("/api/payment-requests/5/cashier-reject")
-                        .with(user(principalWithAuthorities(
-                                7L,
-                                "PAYMENT_OPERATOR"
-                        )))
+                        .with(user(principal(7L)))
                         .with(csrf())
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"version\":2}"))
@@ -837,7 +833,7 @@ class PaymentRequestAuthenticationTest {
                 .thenReturn(null);
 
         mockMvc.perform(post("/api/payment-requests/5/record-payment")
-                        .with(user(principalWithAuthorities(6L, "PAYMENT_OPERATOR")))
+                        .with(user(principalWithAuthorities(6L, "CASHIER")))
                         .with(csrf())
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"version\":3,\"paidAt\":\"2026-07-31T13:30:00+08:00\","
@@ -865,7 +861,7 @@ class PaymentRequestAuthenticationTest {
     @Test
     void paymentOperatorWithoutCsrfReturnsInvalidCsrf() throws Exception {
         mockMvc.perform(post("/api/payment-requests/5/record-payment")
-                        .with(user(principalWithAuthorities(6L, "PAYMENT_OPERATOR")))
+                        .with(user(principalWithAuthorities(6L, "CASHIER")))
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"version\":3,\"paidAt\":\"2026-07-31T13:30:00+08:00\"}"))
                 .andExpect(status().isForbidden())
@@ -885,20 +881,6 @@ class PaymentRequestAuthenticationTest {
                 .andExpect(status().isForbidden())
                 .andExpect(jsonPath("$.code").value("ACCESS_DENIED"))
                 .andExpect(jsonPath("$.message").value("沒有權限執行此操作"));
-
-        verify(recordPaymentService, never()).recordPayment(
-                any(Long.class), any(Long.class), any(RecordPaymentRequest.class));
-    }
-
-    @Test
-    void cashierOnlyUserCannotRecordPayment() throws Exception {
-        mockMvc.perform(post("/api/payment-requests/5/record-payment")
-                        .with(user(cashierPrincipal(6L)))
-                        .with(csrf())
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"version\":3,\"paidAt\":\"2026-07-31T13:30:00+08:00\"}"))
-                .andExpect(status().isForbidden())
-                .andExpect(jsonPath("$.code").value("ACCESS_DENIED"));
 
         verify(recordPaymentService, never()).recordPayment(
                 any(Long.class), any(Long.class), any(RecordPaymentRequest.class));

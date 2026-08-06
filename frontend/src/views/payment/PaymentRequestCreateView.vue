@@ -49,6 +49,9 @@ function createEmptyItem(): PaymentDraftItemForm {
     quantity: null,
     multiplier: null,
     manualAmount: null,
+    travelFrom: '',
+    travelTo: '',
+    confirmationNature: '',
   }
 }
 
@@ -169,6 +172,25 @@ function cleanDescription(value: string): string | null {
   return trimmed === '' ? null : trimmed
 }
 
+function buildExtraData(
+  item: PaymentDraftItemForm,
+  calculationType: CalculationType,
+): Record<string, unknown> | null {
+  if (calculationType === 'TRAVEL') {
+    const from = item.travelFrom.trim()
+    const to = item.travelTo.trim()
+    if (from === '' && to === '') {
+      return null
+    }
+    return { travelFrom: from || null, travelTo: to || null }
+  }
+  if (calculationType === 'CONFIRMATION') {
+    const nature = item.confirmationNature.trim()
+    return nature === '' ? null : { confirmationNature: nature }
+  }
+  return null
+}
+
 function buildItemRequest(
   item: PaymentDraftItemForm,
   sortOrder: number,
@@ -186,7 +208,7 @@ function buildItemRequest(
   const base = {
     expenseTypeId: item.expenseTypeId,
     description: cleanDescription(item.description),
-    extraData: null,
+    extraData: buildExtraData(item, expenseType.calculationType),
     sortOrder,
   }
 
@@ -321,7 +343,7 @@ onMounted(() => {
   <section class="page-container">
     <div class="page-title">
       <div>
-        <p class="eyebrow">PAYMENT REQUEST</p>
+        <p class="eyebrow">請款單</p>
         <h1>新增請款草稿</h1>
         <p>填寫資料後先儲存為草稿，之後可再送出審核。</p>
       </div>

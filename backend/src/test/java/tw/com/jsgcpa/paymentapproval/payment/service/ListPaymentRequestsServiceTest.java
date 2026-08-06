@@ -400,7 +400,7 @@ class ListPaymentRequestsServiceTest {
     }
 
     @Test
-    void paymentPendingForcesApprovedAndUnpaidWithPaymentOperatorAuthority() {
+    void paymentPendingForcesApprovedAndUnpaidWithCashierAuthority() {
         whenSearchReturns(Page.empty());
         when(readAuthorizationService.resolveApprovalStatusForList(
                 PaymentRequestListScope.PAYMENT_PENDING,
@@ -429,11 +429,11 @@ class ListPaymentRequestsServiceTest {
                 ),
                 PaymentRequestListScope.PAYMENT_PENDING,
                 42L,
-                false,
-                true
+                true,
+                false
         );
 
-        verify(readAuthorizationService).requirePaymentOperatorAuthority(
+        verify(readAuthorizationService).requireCashierAuthority(
                 PaymentRequestListScope.PAYMENT_PENDING,
                 true
         );
@@ -454,11 +454,11 @@ class ListPaymentRequestsServiceTest {
     }
 
     @Test
-    void paymentPendingWithoutPaymentOperatorDoesNotQueryRepository() {
+    void paymentPendingWithoutCashierDoesNotQueryRepository() {
         doThrow(new PaymentDraftBusinessException(
                 "PAYMENT_REQUEST_LIST_SCOPE_FORBIDDEN",
                 "目前登入者沒有付款待辦查看權限"
-        )).when(readAuthorizationService).requirePaymentOperatorAuthority(
+        )).when(readAuthorizationService).requireCashierAuthority(
                 PaymentRequestListScope.PAYMENT_PENDING,
                 false
         );

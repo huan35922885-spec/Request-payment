@@ -150,7 +150,27 @@ public class SecurityConfig {
                                 HttpMethod.POST,
                                 "/api/payment-requests/*/record-payment"
                         )
-                        .hasAuthority("PAYMENT_OPERATOR")
+                        .hasAuthority("CASHIER")
+                        .requestMatchers(
+                                HttpMethod.PATCH,
+                                "/api/payment-requests/*/payment"
+                        )
+                        .hasAuthority("CASHIER")
+                        .requestMatchers(
+                                HttpMethod.POST,
+                                "/api/payment-requests/*/payment-proofs"
+                        )
+                        .hasAuthority("CASHIER")
+                        .requestMatchers(
+                                HttpMethod.DELETE,
+                                "/api/payment-requests/*/payment-proofs/*"
+                        )
+                        .hasAuthority("CASHIER")
+                        .requestMatchers(
+                                HttpMethod.GET,
+                                "/api/payment-reports/result-export"
+                        )
+                        .hasAuthority("CASHIER")
                         .anyRequest().permitAll()
                 )
                 .exceptionHandling(exceptionHandling -> exceptionHandling

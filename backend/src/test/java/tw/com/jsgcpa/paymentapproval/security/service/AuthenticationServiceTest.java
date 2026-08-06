@@ -88,10 +88,9 @@ class AuthenticationServiceTest {
     }
 
     @Test
-    void mapsCashierAndPaymentOperatorRoles() {
+    void mapsCashierRole() {
         AuthenticatedUserPrincipal principal = principal(List.of(
-                new SimpleGrantedAuthority("CASHIER"),
-                new SimpleGrantedAuthority("PAYMENT_OPERATOR")
+                new SimpleGrantedAuthority("CASHIER")
         ));
 
         AuthenticatedUserResponse response = service.toResponse(principal);
@@ -100,7 +99,7 @@ class AuthenticationServiceTest {
         assertEquals("cashier", response.username());
         assertEquals("E2E Cashier", response.displayName());
         assertEquals(
-                List.of(SecurityRole.CASHIER, SecurityRole.PAYMENT_OPERATOR),
+                List.of(SecurityRole.CASHIER),
                 response.roles()
         );
     }

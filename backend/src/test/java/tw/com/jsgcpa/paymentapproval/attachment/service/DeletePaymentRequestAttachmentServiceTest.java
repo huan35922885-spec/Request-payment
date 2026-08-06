@@ -26,6 +26,7 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
 import tw.com.jsgcpa.paymentapproval.attachment.exception.AttachmentStorageException;
 import tw.com.jsgcpa.paymentapproval.attachment.exception.PaymentRequestAttachmentDeleteException;
 import tw.com.jsgcpa.paymentapproval.attachment.exception.PaymentRequestAttachmentNotFoundException;
+import tw.com.jsgcpa.paymentapproval.attachment.policy.PaymentProofMaintenancePolicy;
 import tw.com.jsgcpa.paymentapproval.attachment.policy.PaymentRequestAttachmentDeletePolicy;
 import tw.com.jsgcpa.paymentapproval.attachment.storage.AttachmentStorageService;
 import tw.com.jsgcpa.paymentapproval.attachment.storage.PreparedAttachmentDeletion;
@@ -56,6 +57,9 @@ class DeletePaymentRequestAttachmentServiceTest {
     private PaymentRequestAttachmentDeletePolicy deletePolicy;
 
     @Mock
+    private PaymentProofMaintenancePolicy proofMaintenancePolicy;
+
+    @Mock
     private AttachmentStorageService attachmentStorageService;
 
     @Mock
@@ -72,7 +76,8 @@ class DeletePaymentRequestAttachmentServiceTest {
                 paymentRequestRepository,
                 attachmentRepository,
                 deletePolicy,
-                attachmentStorageService
+                attachmentStorageService,
+                proofMaintenancePolicy
         );
         when(paymentRequestRepository.findById(14L))
                 .thenReturn(Optional.of(paymentRequest));
@@ -97,8 +102,7 @@ class DeletePaymentRequestAttachmentServiceTest {
         service.delete(14L, 90L, 1L);
 
         verify(deletePolicy).validate(1L, paymentRequest, null);
-        verify(deletePolicy, org.mockito.Mockito.times(3))
-                .validate(1L, paymentRequest, attachment);
+        verify(deletePolicy).validate(1L, paymentRequest, attachment);
         verify(attachmentStorageService).prepareDelete(
                 "payment-requests/14/file.pdf"
         );

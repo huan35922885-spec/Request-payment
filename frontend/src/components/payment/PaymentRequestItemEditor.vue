@@ -49,6 +49,9 @@ function resetCalculationFields(): void {
   item.quantity = null
   item.multiplier = null
   item.manualAmount = null
+  item.travelFrom = ''
+  item.travelTo = ''
+  item.confirmationNature = ''
 }
 
 async function syncExpenseType(expenseTypeId: number | null): Promise<void> {
@@ -169,6 +172,31 @@ watch(
       show-icon
       class="item-alert"
     />
+
+    <el-row v-if="calculationType === 'TRAVEL'" :gutter="20">
+      <el-col :xs="24" :md="10">
+        <el-form-item label="起點">
+          <el-input v-model="item.travelFrom" maxlength="200" placeholder="交通起點" />
+        </el-form-item>
+      </el-col>
+      <el-col :xs="24" :md="10">
+        <el-form-item label="終點">
+          <el-input v-model="item.travelTo" maxlength="200" placeholder="交通終點" />
+        </el-form-item>
+      </el-col>
+    </el-row>
+
+    <el-row v-if="calculationType === 'CONFIRMATION'" :gutter="20">
+      <el-col :xs="24" :md="12">
+        <el-form-item label="函證性質">
+          <el-input
+            v-model="item.confirmationNature"
+            maxlength="200"
+            placeholder="例如：銀行函證、往來函證"
+          />
+        </el-form-item>
+      </el-col>
+    </el-row>
 
     <el-row v-if="calculationType === 'MANUAL' || calculationType === 'TRAVEL'" :gutter="20">
       <el-col :xs="24" :md="10">

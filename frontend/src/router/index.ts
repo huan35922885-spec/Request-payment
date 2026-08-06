@@ -71,6 +71,12 @@ const router = createRouter({
           component: () => import('../views/payment/PaymentRequestDetailView.vue'),
         },
         {
+          path: 'admin/expense-types',
+          name: 'admin-expense-types',
+          component: () => import('../views/admin/ExpenseTypeAdminView.vue'),
+          meta: { requiresMasterDataAdmin: true },
+        },
+        {
           path: 'payment-requests/:id',
           name: 'payment-request-detail',
           component: () => import('../views/payment/PaymentRequestDetailView.vue'),
@@ -106,6 +112,14 @@ router.beforeEach(async (to) => {
       name: 'login',
       query: { redirect: to.fullPath },
     }
+  }
+
+  const requiresMasterDataAdmin = to.matched.some(
+    (record) => record.meta.requiresMasterDataAdmin === true,
+  )
+  if (requiresMasterDataAdmin
+    && !authStore.user?.roles.includes('MASTER_DATA_ADMIN')) {
+    return { name: 'home' }
   }
 
   return true

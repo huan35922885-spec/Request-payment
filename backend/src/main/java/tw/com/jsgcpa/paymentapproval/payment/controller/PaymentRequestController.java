@@ -3,6 +3,8 @@ package tw.com.jsgcpa.paymentapproval.payment.controller;
 import jakarta.validation.Valid;
 import java.time.LocalDate;
 import org.springframework.http.HttpStatus;
+import java.util.ArrayList;
+import java.util.List;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.format.annotation.DateTimeFormat;
@@ -191,16 +193,33 @@ public class PaymentRequestController {
             @Valid
             @RequestPart("request")
             RecordPaymentRequest request,
+            @RequestPart(value = "files", required = false)
+            List<MultipartFile> paymentProofFiles,
             @RequestPart(value = "file", required = false)
             MultipartFile paymentProofFile
     ) {
+        List<MultipartFile> files = mergeProofFiles(paymentProofFiles, paymentProofFile);
         RecordPaymentResponse response = recordPaymentService.recordPayment(
                 id,
                 request,
-                paymentProofFile,
+                files,
                 principal.getUserId()
         );
         return ResponseEntity.ok(response);
+    }
+
+    private static List<MultipartFile> mergeProofFiles(
+            List<MultipartFile> paymentProofFiles,
+            MultipartFile paymentProofFile
+    ) {
+        List<MultipartFile> files = new ArrayList<>();
+        if (paymentProofFiles != null) {
+            files.addAll(paymentProofFiles);
+        }
+        if (paymentProofFile != null && !paymentProofFile.isEmpty()) {
+            files.add(paymentProofFile);
+        }
+        return files;
     }
 
     /** JSON clients must migrate to multipart so a payment proof is always supplied. */
@@ -234,7 +253,7 @@ public class PaymentRequestController {
                         id,
                         principal.getUserId(),
                         hasAuthority(principal, SecurityRole.CASHIER),
-                        hasAuthority(principal, SecurityRole.PAYMENT_OPERATOR)
+                        false
                 )
         );
     }
@@ -298,16 +317,12 @@ public class PaymentRequestController {
                 principal,
                 SecurityRole.CASHIER
         );
-        boolean hasPaymentOperatorAuthority = hasAuthority(
-                principal,
-                SecurityRole.PAYMENT_OPERATOR
-        );
         return ResponseEntity.ok(listPaymentRequestsService.list(
                 query,
                 scope,
                 principal.getUserId(),
                 hasCashierAuthority,
-                hasPaymentOperatorAuthority
+                false
         ));
     }
 }

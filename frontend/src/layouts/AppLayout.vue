@@ -9,6 +9,9 @@ const route = useRoute()
 const router = useRouter()
 const authStore = useAuthStore()
 const user = computed(() => authStore.user)
+const showMasterDataAdmin = computed(() =>
+  user.value?.roles.includes('MASTER_DATA_ADMIN') === true,
+)
 
 async function logout(): Promise<void> {
   try {
@@ -79,7 +82,13 @@ async function logout(): Promise<void> {
           </el-menu-item>
           <el-menu-item index="/payment/payment-requests">
             <el-icon><Wallet /></el-icon>
-            <span>付款登記</span>
+            <span>付款登記（出納）</span>
+          </el-menu-item>
+          <el-menu-item
+            v-if="showMasterDataAdmin"
+            index="/admin/expense-types"
+          >
+            <span>主檔：費用類型</span>
           </el-menu-item>
         </el-menu>
       </el-aside>

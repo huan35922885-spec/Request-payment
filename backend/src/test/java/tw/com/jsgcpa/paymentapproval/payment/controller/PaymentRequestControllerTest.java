@@ -6,6 +6,7 @@ import static org.hamcrest.Matchers.not;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyBoolean;
+import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
@@ -388,18 +389,18 @@ class PaymentRequestControllerTest {
     }
 
     @Test
-    void listsPaymentPendingWithPaymentOperatorAuthority() throws Exception {
+    void listsPaymentPendingWithCashierAuthority() throws Exception {
         when(listPaymentRequestsService.list(
                 any(PaymentRequestListQuery.class),
                 eq(PaymentRequestListScope.PAYMENT_PENDING),
                 eq(1L),
-                eq(false),
-                eq(true)
+                eq(true),
+                eq(false)
         )).thenReturn(listPageResponse());
 
         mockMvc.perform(MockMvcRequestBuilders.get("/api/payment-requests")
                         .param("scope", "PAYMENT_PENDING")
-                        .param("testAuthority", "PAYMENT_OPERATOR"))
+                        .param("testAuthority", "CASHIER"))
                 .andExpect(MockMvcResultMatchers.status().isOk());
 
         verify(listPaymentRequestsService).list(
@@ -409,18 +410,18 @@ class PaymentRequestControllerTest {
                 )),
                 eq(PaymentRequestListScope.PAYMENT_PENDING),
                 eq(1L),
-                eq(false),
-                eq(true)
+                eq(true),
+                eq(false)
         );
     }
 
     @Test
-    void paymentPendingWithoutPaymentOperatorReturnsForbidden() throws Exception {
+    void paymentPendingWithoutCashierReturnsForbidden() throws Exception {
         when(listPaymentRequestsService.list(
                 any(PaymentRequestListQuery.class),
                 eq(PaymentRequestListScope.PAYMENT_PENDING),
                 eq(1L),
-                eq(true),
+                eq(false),
                 eq(false)
         )).thenThrow(new PaymentDraftBusinessException(
                 "PAYMENT_REQUEST_LIST_SCOPE_FORBIDDEN",
@@ -428,8 +429,7 @@ class PaymentRequestControllerTest {
         ));
 
         mockMvc.perform(MockMvcRequestBuilders.get("/api/payment-requests")
-                        .param("scope", "PAYMENT_PENDING")
-                        .param("testAuthority", "CASHIER"))
+                        .param("scope", "PAYMENT_PENDING"))
                 .andExpect(MockMvcResultMatchers.status().isForbidden())
                 .andExpect(MockMvcResultMatchers.jsonPath("$.code")
                         .value("PAYMENT_REQUEST_LIST_SCOPE_FORBIDDEN"));
@@ -441,8 +441,8 @@ class PaymentRequestControllerTest {
                 any(PaymentRequestListQuery.class),
                 eq(PaymentRequestListScope.PAYMENT_PENDING),
                 eq(1L),
-                eq(false),
-                eq(true)
+                eq(true),
+                eq(false)
         )).thenThrow(new PaymentDraftBusinessException(
                 "PAYMENT_REQUEST_LIST_SCOPE_FILTER_CONFLICT",
                 "PAYMENT_PENDING 不接受此 approvalStatus 篩選"
@@ -451,7 +451,7 @@ class PaymentRequestControllerTest {
         mockMvc.perform(MockMvcRequestBuilders.get("/api/payment-requests")
                         .param("scope", "PAYMENT_PENDING")
                         .param("approvalStatus", "PENDING_CASHIER")
-                        .param("testAuthority", "PAYMENT_OPERATOR"))
+                        .param("testAuthority", "CASHIER"))
                 .andExpect(MockMvcResultMatchers.status().isBadRequest())
                 .andExpect(MockMvcResultMatchers.jsonPath("$.code")
                         .value("PAYMENT_REQUEST_LIST_SCOPE_FILTER_CONFLICT"));
@@ -463,8 +463,8 @@ class PaymentRequestControllerTest {
                 any(PaymentRequestListQuery.class),
                 eq(PaymentRequestListScope.PAYMENT_PENDING),
                 eq(1L),
-                eq(false),
-                eq(true)
+                eq(true),
+                eq(false)
         )).thenThrow(new PaymentDraftBusinessException(
                 "PAYMENT_REQUEST_LIST_SCOPE_FILTER_CONFLICT",
                 "PAYMENT_PENDING 不接受此 paymentStatus 篩選"
@@ -473,7 +473,7 @@ class PaymentRequestControllerTest {
         mockMvc.perform(MockMvcRequestBuilders.get("/api/payment-requests")
                         .param("scope", "PAYMENT_PENDING")
                         .param("paymentStatus", "PAID")
-                        .param("testAuthority", "PAYMENT_OPERATOR"))
+                        .param("testAuthority", "CASHIER"))
                 .andExpect(MockMvcResultMatchers.status().isBadRequest())
                 .andExpect(MockMvcResultMatchers.jsonPath("$.code")
                         .value("PAYMENT_REQUEST_LIST_SCOPE_FILTER_CONFLICT"));
@@ -485,15 +485,15 @@ class PaymentRequestControllerTest {
                 any(PaymentRequestListQuery.class),
                 eq(PaymentRequestListScope.PAYMENT_PENDING),
                 eq(1L),
-                eq(false),
-                eq(true)
+                eq(true),
+                eq(false)
         )).thenReturn(listPageResponse());
 
         mockMvc.perform(MockMvcRequestBuilders.get("/api/payment-requests")
                         .param("scope", "PAYMENT_PENDING")
                         .param("approvalStatus", "APPROVED")
                         .param("paymentStatus", "UNPAID")
-                        .param("testAuthority", "PAYMENT_OPERATOR"))
+                        .param("testAuthority", "CASHIER"))
                 .andExpect(MockMvcResultMatchers.status().isOk());
     }
 
@@ -740,7 +740,7 @@ class PaymentRequestControllerTest {
         when(recordPaymentService.recordPayment(
                 eq(5L),
                 any(RecordPaymentRequest.class),
-                any(MultipartFile.class),
+                anyList(),
                 eq(1L)
         )).thenReturn(recordPaymentResponse());
 
@@ -784,17 +784,18 @@ class PaymentRequestControllerTest {
 
         ArgumentCaptor<RecordPaymentRequest> requestCaptor =
                 ArgumentCaptor.forClass(RecordPaymentRequest.class);
-        ArgumentCaptor<MultipartFile> fileCaptor =
-                ArgumentCaptor.forClass(MultipartFile.class);
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<List<MultipartFile>> filesCaptor =
+                ArgumentCaptor.forClass(List.class);
         verify(recordPaymentService, times(1)).recordPayment(
-                eq(5L), requestCaptor.capture(), fileCaptor.capture(), eq(1L)
+                eq(5L), requestCaptor.capture(), filesCaptor.capture(), eq(1L)
         );
         assertEquals(3L, requestCaptor.getValue().version());
         assertEquals(PAYMENT_PAID_AT, requestCaptor.getValue().paidAt());
         assertEquals(PaymentMethod.BANK_TRANSFER, requestCaptor.getValue().paymentMethod());
         assertEquals("E2E-TRANSFER-001", requestCaptor.getValue().paymentReference());
         assertEquals("已完成銀行轉帳", requestCaptor.getValue().paymentNote());
-        assertEquals("payment-proof.pdf", fileCaptor.getValue().getOriginalFilename());
+        assertEquals("payment-proof.pdf", filesCaptor.getValue().get(0).getOriginalFilename());
         verify(recordPaymentService, never()).recordPayment(
                 eq(5L), eq(1L), any(RecordPaymentRequest.class)
         );
@@ -805,7 +806,7 @@ class PaymentRequestControllerTest {
         when(recordPaymentService.recordPayment(
                 eq(5L),
                 any(RecordPaymentRequest.class),
-                any(MultipartFile.class),
+                anyList(),
                 eq(1L)
         )).thenReturn(recordPaymentResponse());
 
@@ -834,7 +835,7 @@ class PaymentRequestControllerTest {
         verify(recordPaymentService).recordPayment(
                 eq(5L),
                 any(RecordPaymentRequest.class),
-                any(MultipartFile.class),
+                anyList(),
                 eq(1L)
         );
     }
@@ -842,7 +843,7 @@ class PaymentRequestControllerTest {
     @Test
     void missingPaymentProofIsMappedTo400() throws Exception {
         when(recordPaymentService.recordPayment(
-                eq(5L), any(RecordPaymentRequest.class), eq(null), eq(1L)
+                eq(5L), any(RecordPaymentRequest.class), anyList(), eq(1L)
         )).thenThrow(new PaymentDraftBusinessException(
                 "PAYMENT_PROOF_REQUIRED", "Payment proof file is required"
         ));
@@ -860,7 +861,7 @@ class PaymentRequestControllerTest {
                         .value("PAYMENT_PROOF_REQUIRED"));
 
         verify(recordPaymentService).recordPayment(
-                eq(5L), any(RecordPaymentRequest.class), eq(null), eq(1L)
+                eq(5L), any(RecordPaymentRequest.class), anyList(), eq(1L)
         );
     }
 
@@ -880,7 +881,7 @@ class PaymentRequestControllerTest {
 
         verify(recordPaymentService, never()).recordPayment(
                 any(Long.class), any(RecordPaymentRequest.class),
-                any(MultipartFile.class), any(Long.class)
+                anyList(), any(Long.class)
         );
     }
 
@@ -909,7 +910,7 @@ class PaymentRequestControllerTest {
         when(recordPaymentService.recordPayment(
                 eq(5L),
                 any(RecordPaymentRequest.class),
-                any(MultipartFile.class),
+                anyList(),
                 eq(1L)
         )).thenReturn(new RecordPaymentResponse(
                 5L,
@@ -945,7 +946,7 @@ class PaymentRequestControllerTest {
                         .doesNotExist());
 
         verify(recordPaymentService).recordPayment(
-                eq(5L), any(RecordPaymentRequest.class), any(MultipartFile.class), eq(1L)
+                eq(5L), any(RecordPaymentRequest.class), anyList(), eq(1L)
         );
     }
 
@@ -979,7 +980,7 @@ class PaymentRequestControllerTest {
         );
         verify(recordPaymentService, never()).recordPayment(
                 eq(5L), any(RecordPaymentRequest.class),
-                any(MultipartFile.class), eq(1L)
+                anyList(), eq(1L)
         );
     }
 
@@ -997,7 +998,7 @@ class PaymentRequestControllerTest {
 
         verify(recordPaymentService, never()).recordPayment(
                 any(Long.class), any(RecordPaymentRequest.class),
-                any(MultipartFile.class), any(Long.class));
+                anyList(), any(Long.class));
     }
 
     @Test
@@ -1012,7 +1013,7 @@ class PaymentRequestControllerTest {
 
         verify(recordPaymentService, never()).recordPayment(
                 any(Long.class), any(RecordPaymentRequest.class),
-                any(MultipartFile.class), any(Long.class));
+                anyList(), any(Long.class));
     }
 
     @Test
@@ -1028,7 +1029,7 @@ class PaymentRequestControllerTest {
 
         verify(recordPaymentService, never()).recordPayment(
                 any(Long.class), any(RecordPaymentRequest.class),
-                any(MultipartFile.class), any(Long.class));
+                anyList(), any(Long.class));
     }
 
     @Test
@@ -1047,7 +1048,7 @@ class PaymentRequestControllerTest {
 
         verify(recordPaymentService, never()).recordPayment(
                 any(Long.class), any(RecordPaymentRequest.class),
-                any(MultipartFile.class), any(Long.class));
+                anyList(), any(Long.class));
     }
 
     @Test
@@ -1067,7 +1068,7 @@ class PaymentRequestControllerTest {
 
         verify(recordPaymentService, never()).recordPayment(
                 any(Long.class), any(RecordPaymentRequest.class),
-                any(MultipartFile.class), any(Long.class));
+                anyList(), any(Long.class));
     }
 
     @Test
@@ -1084,7 +1085,7 @@ class PaymentRequestControllerTest {
 
         verify(recordPaymentService, never()).recordPayment(
                 any(Long.class), any(RecordPaymentRequest.class),
-                any(MultipartFile.class), any(Long.class));
+                anyList(), any(Long.class));
     }
 
     @Test
@@ -1163,18 +1164,6 @@ class PaymentRequestControllerTest {
     }
 
     @Test
-    void mapsPaymentProofAlreadyExistsTo409() throws Exception {
-        stubRecordPaymentBusinessError(
-                "PAYMENT_PROOF_ALREADY_EXISTS", "payment proof already exists"
-        );
-
-        performValidRecordPaymentRequest()
-                .andExpect(MockMvcResultMatchers.status().isConflict())
-                .andExpect(MockMvcResultMatchers.jsonPath("$.code")
-                        .value("PAYMENT_PROOF_ALREADY_EXISTS"));
-    }
-
-    @Test
     void mapsInactivePaidByTo409() throws Exception {
         stubRecordPaymentBusinessError(
                 "PAID_BY_INACTIVE", "paid by inactive"
@@ -1215,7 +1204,7 @@ class PaymentRequestControllerTest {
         when(recordPaymentService.recordPayment(
                 eq(5L),
                 any(RecordPaymentRequest.class),
-                any(MultipartFile.class),
+                anyList(),
                 eq(1L)
         )).thenThrow(new RuntimeException(
                 "sensitive payment database details"
@@ -1290,7 +1279,8 @@ class PaymentRequestControllerTest {
     @Test
     void returnsValidationErrorsForInvalidTopLevelRequest() throws Exception {
         String requestBody = """
-                {                  "companyId": 2,
+                {
+                  "companyId": 2,
                   "customerId": 3,
                   "requestCategory": "EXPENSE",
                   "reason": "test",
@@ -1319,7 +1309,8 @@ class PaymentRequestControllerTest {
     @Test
     void returnsNestedValidationFieldPath() throws Exception {
         String requestBody = """
-                {                  "companyId": 2,
+                {
+                  "companyId": 2,
                   "customerId": 3,
                   "requestCategory": "EXPENSE",
                   "reason": "test",
@@ -2335,7 +2326,7 @@ class PaymentRequestControllerTest {
         when(recordPaymentService.recordPayment(
                 eq(5L),
                 any(RecordPaymentRequest.class),
-                any(MultipartFile.class),
+                anyList(),
                 eq(1L)
         )).thenThrow(new PaymentDraftBusinessException(code, message));
     }

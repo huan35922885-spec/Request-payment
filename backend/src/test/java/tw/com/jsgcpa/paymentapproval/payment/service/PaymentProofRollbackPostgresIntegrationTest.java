@@ -68,7 +68,7 @@ class PaymentProofRollbackPostgresIntegrationTest {
         createFixture();
         doThrow(new RuntimeException("attachment metadata failure"))
                 .when(attachmentRepository)
-                .saveAndFlush(any(PaymentRequestAttachment.class));
+                .flush();
 
         RuntimeException exception = assertThrows(RuntimeException.class, () ->
                 recordPaymentService.recordPayment(

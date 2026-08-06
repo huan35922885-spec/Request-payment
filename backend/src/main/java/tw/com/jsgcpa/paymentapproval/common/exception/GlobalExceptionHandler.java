@@ -329,7 +329,8 @@ public class GlobalExceptionHandler {
         }
         if ("INVALID_CASHIER_ID".equals(code)
                 || "INVALID_PAID_BY_ID".equals(code)
-                || "INVALID_PAYMENT_DATE".equals(code)) {
+                || "INVALID_PAYMENT_DATE".equals(code)
+                || "INVALID_EXPORT_PERIOD".equals(code)) {
             return HttpStatus.BAD_REQUEST;
         }
         if (isNotFoundCode(code)) {

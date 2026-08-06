@@ -4,10 +4,12 @@ import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import PaymentRequestStatusTag from '../../components/payment/PaymentRequestStatusTag.vue'
 import PaymentRequestAttachmentPanel from '../../components/attachment/PaymentRequestAttachmentPanel.vue'
+import PaymentProofPanel from '../../components/payment/PaymentProofPanel.vue'
 import {
   approvePaymentRequestByCashier,
   approvePaymentRequestByManager,
   getPaymentRequestDetail,
+  patchPaymentRequest,
   rejectPaymentRequestByCashier,
   rejectPaymentRequestByManager,
   recordPayment,
@@ -39,6 +41,8 @@ const reviewingAction = ref<ReviewAction | null>(null)
 const reviewComment = ref('')
 const errorMessage = ref('')
 const recordingPayment = ref(false)
+const maintainingPayment = ref(false)
+const paymentProofFiles = ref<File[]>([])
 const paymentForm = ref<{
   paidAt: Date | null
   paymentMethod: PaymentMethod | null
@@ -75,8 +79,8 @@ const cashierAuthorityError = computed(() =>
 )
 
 const paymentAuthorityError = computed(() =>
-  !authStore.user?.roles.includes('PAYMENT_OPERATOR')
-    ? '目前登入者沒有付款登記權限'
+  !authStore.user?.roles.includes('CASHIER')
+    ? '目前登入者沒有出納操作權限。'
     : '',
 )
 
@@ -112,7 +116,17 @@ const canRecordPayment = computed(() =>
   isPaymentView.value
   && detail.value?.approvalStatus === 'APPROVED'
   && detail.value?.paymentStatus === 'UNPAID'
-  && authStore.user?.roles.includes('PAYMENT_OPERATOR') === true,
+  && authStore.user?.roles.includes('CASHIER') === true,
+)
+
+const canMaintainAsCashier = computed(() =>
+  detail.value?.approvalStatus === 'APPROVED'
+  && authStore.user?.roles.includes('CASHIER') === true,
+)
+
+const canMaintainPaidPayment = computed(() =>
+  canMaintainAsCashier.value
+  && detail.value?.paymentStatus === 'PAID',
 )
 
 function formatUser(user: PaymentRequestDetail['applicant'] | null): string {
@@ -156,6 +170,12 @@ async function loadDetail(): Promise<void> {
   errorMessage.value = ''
   try {
     detail.value = await getPaymentRequestDetail(id)
+    if (detail.value.paymentStatus === 'PAID' && detail.value.paidAt !== null) {
+      paymentForm.value.paidAt = new Date(detail.value.paidAt)
+      paymentForm.value.paymentMethod = detail.value.paymentMethod
+      paymentForm.value.paymentReference = detail.value.paymentReference ?? ''
+      paymentForm.value.paymentNote = detail.value.paymentNote ?? ''
+    }
   } catch (error: unknown) {
     detail.value = null
     errorMessage.value = getApiErrorCode(error) === 'PAYMENT_REQUEST_NOT_FOUND'
@@ -414,6 +434,11 @@ async function recordPaymentAction(): Promise<void> {
     return
   }
 
+  if (paymentProofFiles.value.length === 0) {
+    ElMessage.warning('請上傳至少一份付款證明。')
+    return
+  }
+
   try {
     await ElMessageBox.confirm(
       '確認登記此筆付款？案件將由 APPROVED / UNPAID 變更為 APPROVED / PAID。',
@@ -436,7 +461,8 @@ async function recordPaymentAction(): Promise<void> {
       paymentMethod: paymentForm.value.paymentMethod,
       paymentReference: normalizedText(paymentForm.value.paymentReference),
       paymentNote: normalizedText(paymentForm.value.paymentNote),
-    })
+    }, paymentProofFiles.value)
+    paymentProofFiles.value = []
     ElMessage.success('付款登記成功。')
     await loadDetail()
   } catch (error: unknown) {
@@ -464,6 +490,7 @@ async function recordPaymentAction(): Promise<void> {
       code === 'PAID_BY_NOT_FOUND'
       || code === 'PAID_BY_INACTIVE'
       || code === 'INVALID_PAYMENT_DATE'
+      || code === 'PAYMENT_PROOF_REQUIRED'
     ) {
       ElMessage.error(getApiErrorMessage(error))
     } else {
@@ -471,6 +498,46 @@ async function recordPaymentAction(): Promise<void> {
     }
   } finally {
     recordingPayment.value = false
+  }
+}
+
+function onRecordProofChange(_uploadFile: unknown, uploadFiles: { raw?: File }[]): void {
+  paymentProofFiles.value = uploadFiles
+    .map((item) => item.raw)
+    .filter((file): file is File => file !== undefined)
+}
+
+async function savePaidPaymentMaintenance(): Promise<void> {
+  if (!canMaintainPaidPayment.value || detail.value === null || requestId.value === null) {
+    return
+  }
+  const paidAt = toTaipeiOffsetDateTime(paymentForm.value.paidAt)
+  if (paidAt === null) {
+    ElMessage.warning('請輸入有效的付款時間。')
+    return
+  }
+
+  maintainingPayment.value = true
+  try {
+    await patchPaymentRequest(requestId.value, {
+      version: detail.value.version,
+      paidAt,
+      paymentMethod: paymentForm.value.paymentMethod,
+      paymentReference: normalizedText(paymentForm.value.paymentReference),
+      paymentNote: normalizedText(paymentForm.value.paymentNote),
+    })
+    ElMessage.success('付款資料已更新。')
+    await loadDetail()
+  } catch (error: unknown) {
+    const code = getApiErrorCode(error)
+    if (code === 'PAYMENT_REQUEST_VERSION_CONFLICT') {
+      ElMessage.warning('案件狀態已變更，畫面將重新載入。')
+      await loadDetail()
+    } else {
+      ElMessage.error(getApiErrorMessage(error))
+    }
+  } finally {
+    maintainingPayment.value = false
   }
 }
 
@@ -487,7 +554,7 @@ watch(requestId, () => {
   <section class="page-container">
     <div class="page-title">
       <div>
-        <p class="eyebrow">PAYMENT REQUEST DETAIL</p>
+        <p class="eyebrow">請款單詳情</p>
         <h1>請款單詳情</h1>
         <p>查看請款內容、目前狀態與簽核歷程。</p>
       </div>
@@ -556,7 +623,7 @@ watch(requestId, () => {
           <el-descriptions-item label="退回時間">{{ formatDateTime(detail.rejectedAt) }}</el-descriptions-item>
           <el-descriptions-item label="關閉時間">{{ formatDateTime(detail.closedAt) }}</el-descriptions-item>
           <el-descriptions-item label="實際付款時間">{{ formatDateTime(detail.paidAt) }}</el-descriptions-item>
-          <el-descriptions-item label="付款登記人">{{ formatUser(detail.paidBy) }}</el-descriptions-item>
+          <el-descriptions-item label="出納">{{ formatUser(detail.paidBy) }}</el-descriptions-item>
           <el-descriptions-item label="付款方式">{{ detail.paymentMethod ?? '—' }}</el-descriptions-item>
           <el-descriptions-item label="付款參考號碼">{{ detail.paymentReference ?? '—' }}</el-descriptions-item>
           <el-descriptions-item label="付款備註" :span="3">{{ detail.paymentNote ?? '—' }}</el-descriptions-item>
@@ -682,7 +749,7 @@ watch(requestId, () => {
           <div class="card-header">
             <strong>登記付款</strong>
             <el-tag type="info" effect="plain">
-              {{ authStore.user?.roles.includes('PAYMENT_OPERATOR') ? 'PAYMENT_OPERATOR' : '無付款登記權限' }}
+              {{ authStore.user?.roles.includes('CASHIER') ? '出納（CASHIER）' : '無出納權限' }}
             </el-tag>
           </div>
         </template>
@@ -742,6 +809,20 @@ watch(requestId, () => {
                 placeholder="可輸入付款備註"
               />
             </el-form-item>
+            <el-form-item label="付款證明" required>
+              <el-upload
+                :auto-upload="false"
+                multiple
+                accept=".pdf,.jpg,.jpeg,.png"
+                :file-list="[]"
+                @change="onRecordProofChange"
+              >
+                <el-button type="primary" plain>選擇檔案（可多檔）</el-button>
+              </el-upload>
+              <el-text v-if="paymentProofFiles.length > 0" type="info" size="small">
+                已選 {{ paymentProofFiles.length }} 個檔案
+              </el-text>
+            </el-form-item>
             <div class="review-actions">
               <el-button
                 type="primary"
@@ -761,6 +842,74 @@ watch(requestId, () => {
           show-icon
           :closable="false"
         />
+      </el-card>
+
+      <el-card
+        v-if="detail.approvalStatus === 'APPROVED'"
+        shadow="never"
+        class="detail-card"
+      >
+        <template #header>
+          <strong>付款證明（出納）</strong>
+        </template>
+        <PaymentProofPanel
+          :detail="detail"
+          :can-maintain="canMaintainAsCashier"
+          @refreshed="loadDetail"
+        />
+      </el-card>
+
+      <el-card
+        v-if="canMaintainPaidPayment"
+        shadow="never"
+        class="detail-card payment-action-card"
+      >
+        <template #header>
+          <strong>維護付款資料（出納）</strong>
+        </template>
+        <el-form label-position="top" class="payment-form">
+          <el-row :gutter="16">
+            <el-col :xs="24" :md="12">
+              <el-form-item label="實際付款時間" required>
+                <el-date-picker
+                  v-model="paymentForm.paidAt"
+                  type="datetime"
+                  format="YYYY-MM-DD HH:mm"
+                  style="width: 100%"
+                />
+              </el-form-item>
+            </el-col>
+            <el-col :xs="24" :md="12">
+              <el-form-item label="付款方式">
+                <el-select
+                  v-model="paymentForm.paymentMethod"
+                  clearable
+                  style="width: 100%"
+                >
+                  <el-option
+                    v-for="option in PAYMENT_METHOD_OPTIONS"
+                    :key="option.value"
+                    :label="option.label"
+                    :value="option.value"
+                  />
+                </el-select>
+              </el-form-item>
+            </el-col>
+          </el-row>
+          <el-form-item label="付款參考號碼">
+            <el-input v-model="paymentForm.paymentReference" maxlength="100" />
+          </el-form-item>
+          <el-form-item label="付款備註">
+            <el-input v-model="paymentForm.paymentNote" type="textarea" :rows="3" />
+          </el-form-item>
+          <el-button
+            type="primary"
+            :loading="maintainingPayment"
+            @click="savePaidPaymentMaintenance"
+          >
+            儲存付款資料
+          </el-button>
+        </el-form>
       </el-card>
 
       <el-card shadow="never" class="detail-card">
