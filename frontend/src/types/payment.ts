@@ -71,7 +71,9 @@ export interface PaymentDraftItemForm {
   manualAmount: number | null
   travelFrom: string
   travelTo: string
+  expenseNature: string
   confirmationNature: string
+  stampSize: string
 }
 
 export interface PaymentRequestUserSummary {

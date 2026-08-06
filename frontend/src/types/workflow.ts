@@ -34,7 +34,7 @@ export function getApprovalStatusLabel(status: ApprovalStatus): string {
     case 'APPROVED':
       return '核准結案'
     case 'REJECTED_CLOSED':
-      return '已退回結案'
+      return '退回結案'
   }
 }
 

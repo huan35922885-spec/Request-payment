@@ -119,15 +119,15 @@ onMounted(() => {
         >
           <el-table-column prop="requestNo" label="請款單號" min-width="190" />
           <el-table-column prop="applicantName" label="申請人" min-width="120" />
-          <el-table-column prop="departmentName" label="申請部門" min-width="140" />
-          <el-table-column prop="companyName" label="所屬公司" min-width="140" />
-          <el-table-column prop="customerName" label="客戶" min-width="140" />
-          <el-table-column label="請款類別" width="110">
+          <el-table-column prop="departmentName" label="部門" min-width="140" />
+          <el-table-column prop="companyName" label="公司" min-width="140" />
+          <el-table-column prop="customerName" label="客戶名稱" min-width="140" />
+          <el-table-column label="支出／代墊" width="110">
             <template #default="scope">
               {{ scope.row.requestCategory === 'EXPENSE' ? '支出' : '差旅' }}
             </template>
           </el-table-column>
-          <el-table-column label="請款總金額" width="130" align="right">
+          <el-table-column label="請款金額" width="130" align="right">
             <template #default="scope">
               {{ formatCurrency(scope.row.totalAmount) }}
             </template>
