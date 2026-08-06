@@ -3,12 +3,17 @@ package tw.com.jsgcpa.paymentapproval.payment.service;
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.Mockito.doAnswer;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.time.OffsetDateTime;
 import java.util.Comparator;
+import java.util.List;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.UUID;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.ExecutorService;
@@ -23,7 +28,7 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.mock.web.MockMultipartFile;
 import org.springframework.dao.OptimisticLockingFailureException;
-import org.springframework.transaction.UnexpectedRollbackException;
+import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.transaction.PlatformTransactionManager;
@@ -32,6 +37,9 @@ import org.springframework.transaction.support.TransactionTemplate;
 import tw.com.jsgcpa.paymentapproval.approval.enums.ApprovalAction;
 import tw.com.jsgcpa.paymentapproval.attachment.dto.response.DownloadPaymentRequestAttachmentResult;
 import tw.com.jsgcpa.paymentapproval.attachment.service.DownloadPaymentRequestAttachmentService;
+import tw.com.jsgcpa.paymentapproval.attachment.storage.AttachmentStorageService;
+import tw.com.jsgcpa.paymentapproval.attachment.storage.StoredAttachmentFile;
+import tw.com.jsgcpa.paymentapproval.attachment.validation.ValidatedAttachmentFile;
 import tw.com.jsgcpa.paymentapproval.payment.dto.request.RecordPaymentRequest;
 import tw.com.jsgcpa.paymentapproval.payment.dto.response.PaymentRequestDetailResponse;
 import tw.com.jsgcpa.paymentapproval.payment.dto.response.RecordPaymentResponse;
@@ -56,6 +64,7 @@ class PaymentProofPostgresIntegrationTest {
     @Autowired private GetPaymentRequestDetailService detailService;
     @Autowired private PaymentRequestRepository paymentRequestRepository;
     @Autowired private PlatformTransactionManager transactionManager;
+    @MockitoSpyBean private AttachmentStorageService storage;
 
     private Long paymentRequestId;
     private Long operatorId;
@@ -96,6 +105,11 @@ class PaymentProofPostgresIntegrationTest {
 
         assertEquals(ApprovalAction.PAYMENT_RECORDED, response.action());
         assertEquals(1L, response.version());
+        assertEquals("APPROVED", jdbcTemplate.queryForObject(
+                "SELECT approval_status FROM payment_requests WHERE id = ?",
+                String.class,
+                paymentRequestId
+        ));
         assertEquals(
                 1,
                 jdbcTemplate.queryForObject(
@@ -121,6 +135,31 @@ class PaymentProofPostgresIntegrationTest {
                         paymentRequestId
                 )
         );
+        assertEquals(paidAt.toInstant(), jdbcTemplate.queryForObject(
+                "SELECT paid_at FROM payment_requests WHERE id = ?",
+                OffsetDateTime.class,
+                paymentRequestId
+        ).toInstant());
+        assertEquals("BANK_TRANSFER", jdbcTemplate.queryForObject(
+                "SELECT payment_method FROM payment_requests WHERE id = ?",
+                String.class,
+                paymentRequestId
+        ));
+        assertEquals("PG-E2E-001", jdbcTemplate.queryForObject(
+                "SELECT payment_reference FROM payment_requests WHERE id = ?",
+                String.class,
+                paymentRequestId
+        ));
+        assertEquals("PostgreSQL payment proof", jdbcTemplate.queryForObject(
+                "SELECT payment_note FROM payment_requests WHERE id = ?",
+                String.class,
+                paymentRequestId
+        ));
+        assertEquals(1L, jdbcTemplate.queryForObject(
+                "SELECT version FROM payment_requests WHERE id = ?",
+                Long.class,
+                paymentRequestId
+        ));
         assertEquals(
                 1,
                 jdbcTemplate.queryForObject(
@@ -137,9 +176,70 @@ class PaymentProofPostgresIntegrationTest {
                 String.class,
                 paymentRequestId
         );
+        assertTrue(storagePath != null && !storagePath.isBlank());
+        assertEquals(operatorId, jdbcTemplate.queryForObject(
+                "SELECT uploaded_by_id FROM payment_request_attachments "
+                        + "WHERE payment_request_id = ? AND attachment_type = 'PAYMENT_PROOF'",
+                Long.class,
+                paymentRequestId
+        ));
+        assertEquals("payment-proof.pdf", jdbcTemplate.queryForObject(
+                "SELECT original_filename FROM payment_request_attachments "
+                        + "WHERE payment_request_id = ? AND attachment_type = 'PAYMENT_PROOF'",
+                String.class,
+                paymentRequestId
+        ));
+        assertEquals("application/pdf", jdbcTemplate.queryForObject(
+                "SELECT content_type FROM payment_request_attachments "
+                        + "WHERE payment_request_id = ? AND attachment_type = 'PAYMENT_PROOF'",
+                String.class,
+                paymentRequestId
+        ));
+        assertEquals((long) PROOF.length, jdbcTemplate.queryForObject(
+                "SELECT file_size FROM payment_request_attachments "
+                        + "WHERE payment_request_id = ? AND attachment_type = 'PAYMENT_PROOF'",
+                Long.class,
+                paymentRequestId
+        ));
         Path storedPath = STORAGE_ROOT.resolve(storagePath).normalize();
         assertTrue(storedPath.startsWith(STORAGE_ROOT.toAbsolutePath().normalize()));
         assertArrayEquals(PROOF, Files.readAllBytes(storedPath));
+        assertEquals(operatorId, jdbcTemplate.queryForObject(
+                "SELECT actor_id FROM approval_histories "
+                        + "WHERE payment_request_id = ? AND action = 'PAYMENT_RECORDED'",
+                Long.class,
+                paymentRequestId
+        ));
+        assertEquals("APPROVED", jdbcTemplate.queryForObject(
+                "SELECT from_approval_status FROM approval_histories "
+                        + "WHERE payment_request_id = ? AND action = 'PAYMENT_RECORDED'",
+                String.class,
+                paymentRequestId
+        ));
+        assertEquals("APPROVED", jdbcTemplate.queryForObject(
+                "SELECT to_approval_status FROM approval_histories "
+                        + "WHERE payment_request_id = ? AND action = 'PAYMENT_RECORDED'",
+                String.class,
+                paymentRequestId
+        ));
+        assertEquals("UNPAID", jdbcTemplate.queryForObject(
+                "SELECT from_payment_status FROM approval_histories "
+                        + "WHERE payment_request_id = ? AND action = 'PAYMENT_RECORDED'",
+                String.class,
+                paymentRequestId
+        ));
+        assertEquals("PAID", jdbcTemplate.queryForObject(
+                "SELECT to_payment_status FROM approval_histories "
+                        + "WHERE payment_request_id = ? AND action = 'PAYMENT_RECORDED'",
+                String.class,
+                paymentRequestId
+        ));
+        assertTrue(jdbcTemplate.queryForObject(
+                "SELECT acted_at FROM approval_histories "
+                        + "WHERE payment_request_id = ? AND action = 'PAYMENT_RECORDED'",
+                OffsetDateTime.class,
+                paymentRequestId
+        ) != null);
 
         PaymentRequestDetailResponse detail = detailService.getDetail(
                 paymentRequestId,
@@ -172,6 +272,18 @@ class PaymentProofPostgresIntegrationTest {
         Files.createDirectories(
                 STORAGE_ROOT.resolve("payment-requests").resolve(paymentRequestId.toString())
         );
+        CyclicBarrier storageBarrier = new CyclicBarrier(2);
+        List<String> storedPaths = new CopyOnWriteArrayList<>();
+        doAnswer(invocation -> {
+            try {
+                storageBarrier.await(20, TimeUnit.SECONDS);
+                StoredAttachmentFile stored = (StoredAttachmentFile) invocation.callRealMethod();
+                storedPaths.add(stored.relativeStoragePath());
+                return stored;
+            } catch (Exception exception) {
+                throw new IllegalStateException(exception);
+            }
+        }).when(storage).store(anyLong(), any(ValidatedAttachmentFile.class));
         TransactionTemplate transactionTemplate = new TransactionTemplate(transactionManager);
         transactionTemplate.setPropagationBehavior(TransactionTemplate.PROPAGATION_REQUIRES_NEW);
         CyclicBarrier barrier = new CyclicBarrier(2);
@@ -200,8 +312,16 @@ class PaymentProofPostgresIntegrationTest {
                     firstOutcome.errorCode + "/" + secondOutcome.errorCode
                             + " (" + firstOutcome.errorType + ": " + firstOutcome.errorMessage + ")"
                             + " (" + secondOutcome.errorType + ": " + secondOutcome.errorMessage + ")");
+            assertEquals(0, unknownCount(firstOutcome) + unknownCount(secondOutcome),
+                    firstOutcome.errorType + "/" + secondOutcome.errorType);
+            assertEquals("APPROVED", jdbcTemplate.queryForObject(
+                    "SELECT approval_status FROM payment_requests WHERE id = ?",
+                    String.class,
+                    paymentRequestId
+            ));
             assertEquals(1, jdbcTemplate.queryForObject(
-                    "SELECT COUNT(*) FROM payment_request_attachments WHERE payment_request_id = ?",
+                    "SELECT COUNT(*) FROM payment_request_attachments "
+                            + "WHERE payment_request_id = ? AND attachment_type = 'PAYMENT_PROOF'",
                     Integer.class,
                     paymentRequestId
             ));
@@ -216,6 +336,23 @@ class PaymentProofPostgresIntegrationTest {
                     String.class,
                     paymentRequestId
             ));
+            assertEquals(1L, jdbcTemplate.queryForObject(
+                    "SELECT version FROM payment_requests WHERE id = ?",
+                    Long.class,
+                    paymentRequestId
+            ));
+            String storedPath = jdbcTemplate.queryForObject(
+                    "SELECT storage_path FROM payment_request_attachments "
+                            + "WHERE payment_request_id = ? AND attachment_type = 'PAYMENT_PROOF'",
+                    String.class,
+                    paymentRequestId
+            );
+            assertEquals(2, storedPaths.size());
+            assertEquals(1, storedPaths.stream().filter(storedPath::equals).count());
+            assertEquals(1, storedPaths.stream()
+                    .filter(path -> !storedPath.equals(path))
+                    .filter(path -> !Files.exists(STORAGE_ROOT.resolve(path)))
+                    .count());
             assertEquals(1, regularFileCount());
         } finally {
             executor.shutdownNow();
@@ -269,8 +406,7 @@ class PaymentProofPostgresIntegrationTest {
             if (current instanceof PaymentDraftBusinessException businessException) {
                 return businessException.getCode();
             }
-            if (current instanceof OptimisticLockingFailureException
-                    || current instanceof UnexpectedRollbackException) {
+            if (current instanceof OptimisticLockingFailureException) {
                 return "PAYMENT_REQUEST_VERSION_CONFLICT";
             }
             current = current.getCause();
@@ -280,6 +416,10 @@ class PaymentProofPostgresIntegrationTest {
 
     private int countCode(Outcome outcome, String code) {
         return code.equals(outcome.errorCode) ? 1 : 0;
+    }
+
+    private int unknownCount(Outcome outcome) {
+        return !outcome.success && outcome.errorCode == null ? 1 : 0;
     }
 
     private int regularFileCount() throws Exception {

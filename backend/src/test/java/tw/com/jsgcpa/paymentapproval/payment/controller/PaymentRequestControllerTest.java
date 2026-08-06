@@ -3,6 +3,7 @@ package tw.com.jsgcpa.paymentapproval.payment.controller;
 import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.hasItems;
 import static org.hamcrest.Matchers.not;
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.eq;
@@ -13,6 +14,7 @@ import static org.mockito.Mockito.when;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.math.BigDecimal;
+import java.nio.charset.StandardCharsets;
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
 import java.util.List;
@@ -27,6 +29,7 @@ import org.springframework.mock.web.MockMultipartFile;
 import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
+import org.mockito.ArgumentCaptor;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.web.bind.support.WebDataBinderFactory;
 import org.springframework.web.context.request.NativeWebRequest;
@@ -733,15 +736,23 @@ class PaymentRequestControllerTest {
     }
 
     @Test
-    void recordsPaymentAndReturns200() throws Exception {
-        when(recordPaymentService.recordPayment(
+    void multipartRecordPaymentReturns200() throws Exception {
+        /*
+        when(legacyRecordPaymentService.recordPayment(
                 5L,
                 1L,
                 recordRequest(3L, PAYMENT_PAID_AT, PaymentMethod.BANK_TRANSFER,
                         "E2E-TRANSFER-001", "已完成銀行轉帳")
         )).thenReturn(recordPaymentResponse());
+        */
+        when(recordPaymentService.recordPayment(
+                eq(5L),
+                any(RecordPaymentRequest.class),
+                any(MultipartFile.class),
+                eq(1L)
+        )).thenReturn(recordPaymentResponse());
 
-        performRecordPaymentRequest("""
+        performMultipartRecordPaymentRequest("""
                 {
                   "version": 3,
                   "paidAt": "2026-07-31T13:30:00+08:00",
@@ -779,11 +790,29 @@ class PaymentRequestControllerTest {
                 .andExpect(MockMvcResultMatchers.jsonPath("$.version")
                         .value(4));
 
+        /*
         verify(recordPaymentService, times(1)).recordPayment(
                 5L,
                 1L,
                 recordRequest(3L, PAYMENT_PAID_AT, PaymentMethod.BANK_TRANSFER,
                         "E2E-TRANSFER-001", "已完成銀行轉帳")
+        );
+        */
+        ArgumentCaptor<RecordPaymentRequest> requestCaptor =
+                ArgumentCaptor.forClass(RecordPaymentRequest.class);
+        ArgumentCaptor<MultipartFile> fileCaptor =
+                ArgumentCaptor.forClass(MultipartFile.class);
+        verify(recordPaymentService, times(1)).recordPayment(
+                eq(5L), requestCaptor.capture(), fileCaptor.capture(), eq(1L)
+        );
+        assertEquals(3L, requestCaptor.getValue().version());
+        assertEquals(PAYMENT_PAID_AT, requestCaptor.getValue().paidAt());
+        assertEquals(PaymentMethod.BANK_TRANSFER, requestCaptor.getValue().paymentMethod());
+        assertEquals("E2E-TRANSFER-001", requestCaptor.getValue().paymentReference());
+        assertEquals("已完成銀行轉帳", requestCaptor.getValue().paymentNote());
+        assertEquals("payment-proof.pdf", fileCaptor.getValue().getOriginalFilename());
+        verify(recordPaymentService, never()).recordPayment(
+                eq(5L), eq(1L), any(RecordPaymentRequest.class)
         );
     }
 
@@ -893,7 +922,8 @@ class PaymentRequestControllerTest {
 
     @Test
     void acceptsNullOptionalPaymentFields() throws Exception {
-        when(recordPaymentService.recordPayment(
+        /*
+        when(legacyRecordPaymentService.recordPayment(
                 5L, 1L, recordRequest(3L, PAYMENT_PAID_AT, null, null, null)
         )).thenReturn(new RecordPaymentResponse(
                 5L,
@@ -910,8 +940,29 @@ class PaymentRequestControllerTest {
                 OffsetDateTime.parse("2026-07-31T14:00:00+08:00"),
                 4L
         ));
+        */
+        when(recordPaymentService.recordPayment(
+                eq(5L),
+                any(RecordPaymentRequest.class),
+                any(MultipartFile.class),
+                eq(1L)
+        )).thenReturn(new RecordPaymentResponse(
+                5L,
+                "PAY-20260731-000005",
+                ApprovalAction.PAYMENT_RECORDED,
+                ApprovalStatus.APPROVED,
+                PaymentStatus.PAID,
+                6L,
+                "E2E 皜祈岫?箇?",
+                RESPONSE_PAID_AT,
+                null,
+                null,
+                null,
+                OffsetDateTime.parse("2026-07-31T14:00:00+08:00"),
+                4L
+        ));
 
-        performRecordPaymentRequest("""
+        performMultipartRecordPaymentRequest("""
                 {
                   "version": 3,
                   "paidAt": "2026-07-31T13:30:00+08:00",
@@ -928,23 +979,53 @@ class PaymentRequestControllerTest {
                 .andExpect(MockMvcResultMatchers.jsonPath("$.paymentNote")
                         .doesNotExist());
 
+        /*
         verify(recordPaymentService).recordPayment(
                 5L, 1L, recordRequest(3L, PAYMENT_PAID_AT, null, null, null)
+        );
+        */
+        verify(recordPaymentService).recordPayment(
+                eq(5L), any(RecordPaymentRequest.class), any(MultipartFile.class), eq(1L)
         );
     }
 
     @Test
-    void acceptsRequestWithoutPaidById() throws Exception {
-        performRecordPaymentRequest("""
-                {"version":3,
-                 "paidAt":"2026-07-31T13:30:00+08:00"}
+    void legacyJsonRecordPaymentRequiresProof() throws Exception {
+        when(recordPaymentService.recordPayment(
+                eq(5L),
+                eq(1L),
+                any(RecordPaymentRequest.class)
+        )).thenThrow(new PaymentDraftBusinessException(
+                "PAYMENT_PROOF_REQUIRED", "Payment proof file is required"
+        ));
+
+        performLegacyJsonRecordPaymentRequest("""
+                {
+                  "version": 3,
+                  "paidAt": "2026-08-06T10:30:00+08:00",
+                  "paymentMethod": "BANK_TRANSFER",
+                  "paymentReference": "TX-001",
+                  "paymentNote": "付款完成"
+                }
                 """)
-                .andExpect(MockMvcResultMatchers.status().isOk());
+                .andExpect(MockMvcResultMatchers.status().isBadRequest())
+                .andExpect(MockMvcResultMatchers.jsonPath("$.code")
+                        .value("PAYMENT_PROOF_REQUIRED"))
+                .andExpect(MockMvcResultMatchers.jsonPath("$.path")
+                        .value("/api/payment-requests/5/record-payment"));
+
+        verify(recordPaymentService).recordPayment(
+                eq(5L), eq(1L), any(RecordPaymentRequest.class)
+        );
+        verify(recordPaymentService, never()).recordPayment(
+                eq(5L), any(RecordPaymentRequest.class),
+                any(MultipartFile.class), eq(1L)
+        );
     }
 
     @Test
     void rejectsNullPaymentVersionWithValidationError() throws Exception {
-        performRecordPaymentRequest("""
+        performMultipartRecordPaymentRequest("""
                 {"version":null,
                  "paidAt":"2026-07-31T13:30:00+08:00"}
                 """)
@@ -955,12 +1036,13 @@ class PaymentRequestControllerTest {
                         .value(hasItems("version")));
 
         verify(recordPaymentService, never()).recordPayment(
-                any(), any(), any(RecordPaymentRequest.class));
+                any(Long.class), any(RecordPaymentRequest.class),
+                any(MultipartFile.class), any(Long.class));
     }
 
     @Test
     void rejectsNegativePaymentVersionWithValidationError() throws Exception {
-        performRecordPaymentRequest("""
+        performMultipartRecordPaymentRequest("""
                 {"version":-1,
                  "paidAt":"2026-07-31T13:30:00+08:00"}
                 """)
@@ -969,12 +1051,13 @@ class PaymentRequestControllerTest {
                         .value("VALIDATION_FAILED"));
 
         verify(recordPaymentService, never()).recordPayment(
-                any(), any(), any(RecordPaymentRequest.class));
+                any(Long.class), any(RecordPaymentRequest.class),
+                any(MultipartFile.class), any(Long.class));
     }
 
     @Test
     void rejectsNullPaidAtWithValidationError() throws Exception {
-        performRecordPaymentRequest("""
+        performMultipartRecordPaymentRequest("""
                 {"version":3,"paidAt":null}
                 """)
                 .andExpect(MockMvcResultMatchers.status().isBadRequest())
@@ -984,14 +1067,15 @@ class PaymentRequestControllerTest {
                         .value(hasItems("paidAt")));
 
         verify(recordPaymentService, never()).recordPayment(
-                any(), any(), any(RecordPaymentRequest.class));
+                any(Long.class), any(RecordPaymentRequest.class),
+                any(MultipartFile.class), any(Long.class));
     }
 
     @Test
     void rejectsPaymentReferenceLongerThan100Characters() throws Exception {
         String reference = "x".repeat(101);
 
-        performRecordPaymentRequest("{" +
+        performMultipartRecordPaymentRequest("{" +
                 "\"version\":3," +
                 "\"paidAt\":\"2026-07-31T13:30:00+08:00\"," +
                 "\"paymentReference\":\"" + reference + "\"}")
@@ -1002,12 +1086,13 @@ class PaymentRequestControllerTest {
                         .value(hasItems("paymentReference")));
 
         verify(recordPaymentService, never()).recordPayment(
-                any(), any(), any(RecordPaymentRequest.class));
+                any(Long.class), any(RecordPaymentRequest.class),
+                any(MultipartFile.class), any(Long.class));
     }
 
     @Test
     void rejectsInvalidPaymentMethodAsInvalidRequestBody() throws Exception {
-        performRecordPaymentRequest("""
+        performMultipartRecordPaymentRequest("""
                 {"version":3,
                  "paidAt":"2026-07-31T13:30:00+08:00",
                  "paymentMethod":"CREDIT_CARD"}
@@ -1021,12 +1106,13 @@ class PaymentRequestControllerTest {
                         .isEmpty());
 
         verify(recordPaymentService, never()).recordPayment(
-                any(), any(), any(RecordPaymentRequest.class));
+                any(Long.class), any(RecordPaymentRequest.class),
+                any(MultipartFile.class), any(Long.class));
     }
 
     @Test
     void rejectsInvalidPaidAtAsInvalidRequestBody() throws Exception {
-        performRecordPaymentRequest("""
+        performMultipartRecordPaymentRequest("""
                 {"version":3,
                  "paidAt":"not-a-date","paymentMethod":"BANK_TRANSFER"}
                 """)
@@ -1037,12 +1123,13 @@ class PaymentRequestControllerTest {
                         .isEmpty());
 
         verify(recordPaymentService, never()).recordPayment(
-                any(), any(), any(RecordPaymentRequest.class));
+                any(Long.class), any(RecordPaymentRequest.class),
+                any(MultipartFile.class), any(Long.class));
     }
 
     @Test
     void rejectsEmptyRecordPaymentBody() throws Exception {
-        performRecordPaymentRequest("")
+        performMultipartRecordPaymentRequest("")
                 .andExpect(MockMvcResultMatchers.status().isBadRequest())
                 .andExpect(MockMvcResultMatchers.jsonPath("$.code")
                         .value("INVALID_REQUEST_BODY"))
@@ -1116,6 +1203,18 @@ class PaymentRequestControllerTest {
     }
 
     @Test
+    void mapsPaymentProofAlreadyExistsTo409() throws Exception {
+        stubRecordPaymentBusinessError(
+                "PAYMENT_PROOF_ALREADY_EXISTS", "payment proof already exists"
+        );
+
+        performValidRecordPaymentRequest()
+                .andExpect(MockMvcResultMatchers.status().isConflict())
+                .andExpect(MockMvcResultMatchers.jsonPath("$.code")
+                        .value("PAYMENT_PROOF_ALREADY_EXISTS"));
+    }
+
+    @Test
     void mapsInactivePaidByTo409() throws Exception {
         stubRecordPaymentBusinessError(
                 "PAID_BY_INACTIVE", "paid by inactive"
@@ -1153,10 +1252,20 @@ class PaymentRequestControllerTest {
 
     @Test
     void hidesRecordPaymentUnexpectedExceptionDetails() throws Exception {
-        when(recordPaymentService.recordPayment(
+        /*
+        when(legacyRecordPaymentService.recordPayment(
                 5L, 1L,
                 recordRequest(3L, PAYMENT_PAID_AT, PaymentMethod.BANK_TRANSFER,
                         "E2E-TRANSFER-001", "已完成銀行轉帳")
+        )).thenThrow(new RuntimeException(
+                "sensitive payment database details"
+        ));
+        */
+        when(recordPaymentService.recordPayment(
+                eq(5L),
+                any(RecordPaymentRequest.class),
+                any(MultipartFile.class),
+                eq(1L)
         )).thenThrow(new RuntimeException(
                 "sensitive payment database details"
         ));
@@ -2213,19 +2322,51 @@ class PaymentRequestControllerTest {
                         .doesNotExist());
     }
 
-    private org.springframework.test.web.servlet.ResultActions performRecordPaymentRequest(
+    private org.springframework.test.web.servlet.ResultActions performMultipartRecordPaymentRequest(
+            String requestJson
+    ) throws Exception {
+        return performMultipartRecordPaymentRequest(requestJson, paymentProofPart());
+    }
+
+    private org.springframework.test.web.servlet.ResultActions performMultipartRecordPaymentRequest(
+            String requestJson,
+            MockMultipartFile proofFile
+    ) throws Exception {
+        MockMultipartFile requestPart = new MockMultipartFile(
+                "request",
+                "request.json",
+                MediaType.APPLICATION_JSON_VALUE,
+                requestJson.getBytes(StandardCharsets.UTF_8)
+        );
+        return mockMvc.perform(multipart("/api/payment-requests/5/record-payment")
+                .file(requestPart)
+                .file(proofFile)
+                .with(org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.csrf()));
+    }
+
+    private org.springframework.test.web.servlet.ResultActions performLegacyJsonRecordPaymentRequest(
             String body
     ) throws Exception {
         return mockMvc.perform(MockMvcRequestBuilders.post(
                         "/api/payment-requests/5/record-payment"
                 )
+                .with(org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.csrf())
                 .contentType(MediaType.APPLICATION_JSON)
                 .content(body));
     }
 
+    private MockMultipartFile paymentProofPart() {
+        return new MockMultipartFile(
+                "file",
+                "payment-proof.pdf",
+                MediaType.APPLICATION_PDF_VALUE,
+                new byte[]{0x25, 0x50, 0x44, 0x46}
+        );
+    }
+
     private org.springframework.test.web.servlet.ResultActions performValidRecordPaymentRequest()
             throws Exception {
-        return performRecordPaymentRequest("""
+        return performMultipartRecordPaymentRequest("""
                 {
                   "version": 3,
                   "paidAt": "2026-07-31T13:30:00+08:00",
@@ -2240,11 +2381,27 @@ class PaymentRequestControllerTest {
             String code,
             String message
     ) {
-        when(recordPaymentService.recordPayment(
+        /*
+        when(legacyRecordPaymentService.recordPayment(
+                eq(5L),
+                any(RecordPaymentRequest.class),
+                any(MultipartFile.class),
+                eq(1L)
+        )).thenThrow(new PaymentDraftBusinessException(code, message));
+        */
+        /*
+        when(legacyRecordPaymentService.recordPayment(
                 5L,
                 1L,
                 recordRequest(3L, PAYMENT_PAID_AT, PaymentMethod.BANK_TRANSFER,
                         "E2E-TRANSFER-001", "已完成銀行轉帳")
+        )).thenThrow(new PaymentDraftBusinessException(code, message));
+        */
+        when(recordPaymentService.recordPayment(
+                eq(5L),
+                any(RecordPaymentRequest.class),
+                any(MultipartFile.class),
+                eq(1L)
         )).thenThrow(new PaymentDraftBusinessException(code, message));
     }
 

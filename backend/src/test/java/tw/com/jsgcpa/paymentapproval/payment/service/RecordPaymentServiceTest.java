@@ -7,6 +7,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
@@ -429,7 +430,10 @@ class RecordPaymentServiceTest {
         assertSame(metadataFailure, exception);
         assertEquals(1, exception.getSuppressed().length);
         assertSame(cleanupFailure, exception.getSuppressed()[0]);
-        verify(storage).delete(storedFile.relativeStoragePath());
+        ArgumentCaptor<Runnable> cleanupCaptor = ArgumentCaptor.forClass(Runnable.class);
+        verify(cleanupRegistrar).register(cleanupCaptor.capture());
+        cleanupCaptor.getValue().run();
+        verify(storage, times(1)).delete(storedFile.relativeStoragePath());
     }
 
     @Test
